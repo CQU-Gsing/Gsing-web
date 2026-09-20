@@ -1,1 +1,31 @@
-{% extends 'base.html' %}{% block title %}用户登录｜GSing{% endblock %}{% block body %}<main class="auth-shell"><a class="back" href="{{ url_for('home') }}">← 返回官网</a><section class="auth-card"><img src="{{ url_for('media_file',filename='home/GSing蓝色徽PNG.png') }}" alt="GSing"><p class="eyebrow">TEAM ACCESS</p><h1>用户登录</h1><p>登录 GSing 账户；管理员登录后可进入内容后台。</p><form method="post"><label>用户名<input name="username" autocomplete="username" required autofocus></label><label>密码<input type="password" name="password" autocomplete="current-password" required></label><button>登录</button></form><p class="auth-switch">还没有账户？<a href="{{ url_for('register') }}">立即注册</a></p></section></main>{% endblock %}
+{% extends 'base.html' %}
+{% block title %}登录 | GSing 机器人战队{% endblock %}
+{% block body_attributes %}class="account-page" data-site-theme="garden" data-page-kind="account"{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static',filename='css/auth-reference.css') }}">{% endblock %}
+{% block body %}
+<nav class="page-controls" aria-label="页面快捷导航">
+  <a href="{{ url_for('home') }}" onclick="if(history.length>1){history.back();return false}"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m10 5-7 7 7 7M3 12h18"/></svg><span>返回上一页</span></a>
+  <a href="{{ url_for('home') }}"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7M5 9v12h5v-7h4v7h5V9"/></svg><span>首页</span></a>
+</nav>
+<nav class="site-navigation" aria-label="全站导航">
+  <a class="site-brand" href="{{ url_for('home') }}"><img src="{{ url_for('media_file',filename='home/GSing蓝色徽PNG.png') }}" alt="GSing 徽标"><span>GSing.</span></a>
+  <div class="site-nav-links"><a href="{{ url_for('home') }}#categories">探索战队</a><a href="{{ url_for('home') }}#stories">战队动态</a><a href="{{ url_for('home') }}#contact">联系我们</a></div>
+</nav>
+<main class="account-main"><section class="login-container">
+  <div class="login-header"><h1><span aria-hidden="true">↪</span> 账号登录</h1><p>欢迎回来，请登录后继续</p></div>
+  <div class="tab-nav" role="tablist"><button class="tab-item active" type="button" data-auth-tab="password">密码登录</button><button class="tab-item" type="button" data-auth-tab="code">验证码登录</button></div>
+  <form method="post" data-auth-panel="password">
+    <div class="form-group"><label for="login-name">邮箱或用户名</label><input class="form-control" id="login-name" name="username" placeholder="请输入注册邮箱或用户名" autocomplete="username" required autofocus></div>
+    <div class="form-group"><label for="login-password">密码</label><input class="form-control" id="login-password" type="password" name="password" placeholder="请输入密码" autocomplete="current-password" required></div>
+    <button class="btn-login" type="submit">登录</button>
+  </form>
+  <form method="post" action="{{ url_for('login_code', next=request.args.get('next')) if request.args.get('next') else url_for('login_code') }}" data-auth-panel="code" hidden>
+    <div class="form-group"><label for="code-email">邮箱</label><input class="form-control" id="code-email" type="email" name="email" data-email placeholder="请输入注册邮箱" autocomplete="email" required></div>
+    <div class="form-group"><label for="login-code">验证码</label><div class="code-input"><input class="form-control" id="login-code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="6位验证码" required><button class="send-code-btn" type="button" data-send-code data-purpose="login">发送验证码</button></div></div>
+    <button class="btn-login" type="submit">登录</button>
+  </form>
+  <p class="code-message" data-code-message></p>
+  <div class="register-link">还没有账号？ <a href="{{ url_for('register') }}">立即注册</a></div>
+</section></main>
+<script src="{{ url_for('static',filename='js/auth-email.js') }}" defer></script>
+{% endblock %}

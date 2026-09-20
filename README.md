@@ -6,6 +6,8 @@
 
 - 战队官网首页与移动端响应式布局
 - 用户注册、登录与 Session 会话
+- QQ 邮箱验证码注册与验证码登录
+- 支持“邮箱或用户名 + 密码”登录
 - 普通用户、管理员、终极管理员三级权限
 - 终极管理员可授予/取消管理员权限并删除普通账户
 - 文章发布、编辑、草稿和删除
@@ -13,6 +15,7 @@
 - 终端实时访问日志，识别 Cloudflare 真实访客 IP
 - 使用本地 ip2region IPv4/IPv6 数据库直接显示 IP 国家、省份、城市和运营商
 - 每次启动生成独立的 `logs/access-YYYYMMDD-HHMMSS.log`，访问记录同时写入 SQLite `visits` 表
+- SQLite 原子累计访问计数，重启后继续累计，并显示在官网页脚和每条访问日志中
 - 自动初始化示例文章
 - 使用 `media` 中的战队徽标、合影、机器人照片和招新海报
 
@@ -31,6 +34,8 @@ python -u main.py
 - 密码：`gsing2024`
 
 正式部署前请设置 `GSING_SECRET_KEY`、`GSING_ADMIN_USERNAME` 和 `GSING_ADMIN_PASSWORD` 环境变量。管理员仅在数据库首次创建时初始化；修改环境变量不会覆盖已有账户。
+
+邮箱验证码默认通过 QQ 邮箱 SMTP SSL（`smtp.qq.com:465`）发送。发送账号由 `QQ_MAIL_USER` 配置，授权码优先读取 `QQ_MAIL_AUTH_CODE` 环境变量，否则读取被 Git 忽略的 `data/qq_mail_auth_code.txt`。
 
 ## 目录
 

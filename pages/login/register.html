@@ -1,1 +1,28 @@
-{% extends 'base.html' %}{% block title %}用户注册｜GSing{% endblock %}{% block body %}<main class="auth-shell"><a class="back" href="{{ url_for('home') }}">← 返回官网</a><section class="auth-card"><img src="{{ url_for('media_file',filename='home/GSing蓝色徽PNG.png') }}" alt="GSing"><p class="eyebrow">JOIN GSING ONLINE</p><h1>注册账户</h1><p>创建普通用户账户；管理员权限由终极管理员授予。</p><form method="post"><label>用户名<input name="username" minlength="2" maxlength="24" autocomplete="username" required autofocus></label><label>密码<input type="password" name="password" minlength="8" autocomplete="new-password" required></label><label>确认密码<input type="password" name="confirm_password" minlength="8" autocomplete="new-password" required></label><button>注册并登录</button></form><p class="auth-switch">已有账户？<a href="{{ url_for('login') }}">返回登录</a></p></section></main>{% endblock %}
+{% extends 'base.html' %}
+{% block title %}注册 | GSing 机器人战队{% endblock %}
+{% block body_attributes %}class="account-page" data-site-theme="garden" data-page-kind="account"{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static',filename='css/auth-reference.css') }}">{% endblock %}
+{% block body %}
+<nav class="page-controls" aria-label="页面快捷导航">
+  <a href="{{ url_for('login') }}"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m10 5-7 7 7 7M3 12h18"/></svg><span>返回登录</span></a>
+  <a href="{{ url_for('home') }}"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7M5 9v12h5v-7h4v7h5V9"/></svg><span>首页</span></a>
+</nav>
+<nav class="site-navigation" aria-label="全站导航">
+  <a class="site-brand" href="{{ url_for('home') }}"><img src="{{ url_for('media_file',filename='home/GSing蓝色徽PNG.png') }}" alt="GSing 徽标"><span>GSing.</span></a>
+  <div class="site-nav-links"><a href="{{ url_for('home') }}#categories">探索战队</a><a href="{{ url_for('home') }}#stories">战队动态</a><a href="{{ url_for('home') }}#contact">联系我们</a></div>
+</nav>
+<main class="account-main"><section class="register-container">
+  <div class="register-header"><h1><span aria-hidden="true">＋</span> 账号注册</h1><p>使用邮箱注册，加入 GSing 网站</p></div>
+  <form method="post" id="registerForm">
+    <div class="form-group"><label for="username">用户名</label><input class="form-control" id="username" name="username" minlength="2" maxlength="24" placeholder="2–24 个字符" autocomplete="username" required autofocus><small>可使用中文、字母、数字或下划线</small></div>
+    <div class="form-group"><label for="email">邮箱</label><input class="form-control" id="email" type="email" name="email" data-email placeholder="用于登录和接收验证码" autocomplete="email" required></div>
+    <div class="form-group"><label for="register-code">验证码</label><div class="code-input"><input class="form-control" id="register-code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="请输入6位验证码" required><button class="send-code-btn" type="button" data-send-code data-purpose="register">发送验证码</button></div></div>
+    <div class="form-group"><label for="password">密码</label><input class="form-control" id="password" type="password" name="password" minlength="8" placeholder="至少8位" autocomplete="new-password" required><div class="password-strength"><div class="strength-bar" id="strengthBar"></div></div><small>至少8位，建议使用字母、数字和符号组合</small></div>
+    <div class="form-group"><label for="confirm-password">确认密码</label><input class="form-control" id="confirm-password" type="password" name="confirm_password" minlength="8" placeholder="请再次输入密码" autocomplete="new-password" required></div>
+    <button class="btn-register" type="submit">注册并登录</button>
+  </form>
+  <p class="code-message" data-code-message></p>
+  <div class="login-link">已有账号？ <a href="{{ url_for('login') }}">立即登录</a></div>
+</section></main>
+<script src="{{ url_for('static',filename='js/auth-email.js') }}" defer></script>
+{% endblock %}

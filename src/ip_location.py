@@ -80,3 +80,12 @@ def format_ip_location(ip):
         if value and value not in values:
             values.append(value)
     return " ".join(values) or "未知"
+
+
+def format_ip_city(ip):
+    result = query_ip_location(ip)
+    for key in ("city", "region", "country"):
+        value = result.get(key, "")
+        if value:
+            return value
+    return "未知"
