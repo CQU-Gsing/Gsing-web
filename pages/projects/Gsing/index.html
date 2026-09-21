@@ -1,7 +1,0 @@
-{% extends 'base.html' %}
-{% block title %}关于战队｜GSing{% endblock %}
-{% block head %}<link rel="stylesheet" href="{{ url_for('static',filename='css/home-reference.css') }}?v=20260920-about-empty">{% endblock %}
-{% block body %}
-<header class="header"><a class="brand" href="{{ url_for('home') }}"><img class="brand-avatar" src="{{ url_for('media_file',filename='home/GSing蓝色徽PNG.png') }}" alt="GSing"> GSing<span class="brand-dot">.</span></a><nav><a href="{{ url_for('home') }}">返回首页</a><a href="{{ url_for('message_board') }}">留言板</a>{% if is_admin %}<a href="{{ url_for('edit_gsing_page') }}">编辑页面</a>{% endif %}</nav>{% if project.external_url %}<a class="profile-link" href="{{ project.external_url }}" target="_blank" rel="noopener noreferrer">{{ project.external_label or '联系我们' }} ↗</a>{% endif %}</header>
-<main><section class="blank-team-page"><p class="eyebrow">ABOUT GSING</p><h1>关于战队</h1>{% if project_blocks %}<div class="article-body">{% for block in project_blocks %}{% if block.type=='image' %}<img class="article-media" src="{{ block.url }}" alt="GSing 图片">{% elif block.type=='video' %}<video class="article-media" src="{{ block.url }}" controls></video>{% elif block.type=='link' %}<a class="article-external" href="{{ block.url }}" target="_blank" rel="noopener noreferrer">{{ block.label }} ↗</a>{% else %}<p>{{ block.text }}</p>{% endif %}{% endfor %}</div>{% endif %}{% if is_admin and not project_blocks %}<a class="primary-action" href="{{ url_for('edit_gsing_page') }}">添加战队内容</a>{% endif %}</section></main>
-{% endblock %}

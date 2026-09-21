@@ -1,0 +1,11 @@
+{% extends 'base.html' %}
+{% block title %}{{ group.name }}｜GSing{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static',filename='css/team.css') }}?v=20260921-team-history">{% endblock %}
+{% block body %}
+
+<main><section class="team-group-page"><p class="eyebrow">FIVE DIRECTIONS · ONE TEAM</p><h1>{{ group.name }}</h1><p class="team-tagline">{{ group.tagline }}</p><p class="team-lead">{{ group.intro }}</p>
+<div class="group-detail-grid"><section><h2>我们做什么</h2><ul>{% for task in group.tasks %}<li>{{ task }}</li>{% endfor %}</ul></section><section><h2>期待这样的你</h2><p>{{ group.fit }}</p><p>保持好奇，愿意学习，和队友一起把想法做成实际作品。</p></section></div>
+<section class="team-join"><p class="eyebrow">JOIN GSING · 2027</p><h2>一起写下 GSing 的下一段故事</h2><p>2027 赛季二队面向 2026 级大一新生招新。填写报名问卷，完成信息提交即报名成功。</p><p class="recruitment-flow">报名 → 资格初筛 → 分组基础考核 → 线下面谈 → 试用期培养 → 正式入队</p><a class="primary-action" href="{{ team_content.registration_url }}" rel="noopener noreferrer">前往报名问卷 ↗</a></section>
+<nav class="team-group-nav" aria-label="其他组别">{% for item in team_content.groups %}<a href="{{ url_for('team_group',slug=item.slug) }}" {% if item.slug==group.slug %}aria-current="page"{% endif %}>{{ item.name }}</a>{% endfor %}</nav>
+</section></main>
+{% endblock %}

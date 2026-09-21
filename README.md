@@ -28,3 +28,7 @@
 ## 欢迎交流
 
 欢迎通过官网的文章评论和[留言板](https://www.cqu-gsing.tech/message-board)分享想法、提出建议。战队介绍与招新信息请关注[官网首页](https://www.cqu-gsing.tech)。
+
+## 网站更新
+
+查看 [更新日志](CHANGELOG.md)，了解网站近期的内容与功能变化。

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import re
 import logging
 import sys
@@ -8,6 +9,7 @@ import time
 import uuid
 from datetime import datetime
 from functools import wraps
+from urllib.parse import urlsplit
 from pathlib import Path
 
 from flask import Flask, abort, flash, g, jsonify, redirect, render_template, request, send_from_directory, session, url_for
@@ -22,6 +24,13 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 BASE_DIR = Path(__file__).resolve().parent
+TEAM_CONTENT = json.loads((BASE_DIR / "content" / "team.json").read_text(encoding="utf-8"))
+AWARD_GALLERY = [
+    {"label": "一队 · 障碍赛一等奖", "preview": "/media/pages/2026RC/一队_障碍赛_一等奖.webp"},
+    {"label": "一队 · 任务赛三等奖", "preview": "/media/pages/2026RC/一队_任务赛_三等奖.webp"},
+    {"label": "二队 · 障碍赛二等奖", "preview": "/media/pages/2026RC/二队_障碍赛_二等奖.webp"},
+    {"label": "二队 · 任务赛三等奖", "preview": "/media/pages/2026RC/二队_任务赛_三等奖.webp"},
+]
 LOG_DIR = BASE_DIR / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 STARTED_AT = datetime.now()
@@ -79,6 +88,14 @@ VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov"}
 
 def valid_external_url(value: str) -> bool:
     return not value or bool(re.match(r"^(https?://|weixin://)", value, re.IGNORECASE))
+
+
+def valid_direct_url(value: str) -> bool:
+    try:
+        parsed = urlsplit(value)
+        return parsed.scheme.lower() in {"http", "https"} and bool(parsed.hostname) and not any(char.isspace() or ord(char) < 32 for char in value) and "\\" not in value
+    except ValueError:
+        return False
 
 
 def uploaded_media():
@@ -182,7 +199,7 @@ def superadmin_required(view):
 
 @app.context_processor
 def inject_globals():
-    return {"current_user": session.get("username"), "is_admin": session.get("role") in {"admin", "superadmin"}, "is_superadmin": session.get("role") == "superadmin", "admin_name": session.get("username"), "visit_count": store.get_visit_count()}
+    return {"team_content": TEAM_CONTENT, "current_user": session.get("username"), "is_admin": session.get("role") in {"admin", "superadmin"}, "is_superadmin": session.get("role") == "superadmin", "admin_name": session.get("username"), "visit_count": store.get_visit_count()}
 
 
 @app.get("/")
@@ -193,7 +210,15 @@ def home():
 @app.get("/projects/gsing/")
 def gsing_project():
     project = store.get_page_settings("gsing")
-    return render_template("projects/Gsing/index.html", project=project, project_blocks=article_content_blocks(project.get("content", "")))
+    return render_template("team/history.html", project=project, project_blocks=article_content_blocks(project.get("content", "")))
+
+
+@app.get("/groups/<slug>/")
+def team_group(slug: str):
+    group = next((item for item in TEAM_CONTENT["groups"] if item["slug"] == slug), None)
+    if group is None:
+        abort(404)
+    return render_template("groups/detail.html", group=group)
 
 
 @app.get("/pages/home/")
@@ -308,19 +333,23 @@ def logout():
     return redirect(url_for("home"))
 
 
+@app.get("/awards/2026/")
+def awards_2026():
+    return render_template("articles/awards.html", award_gallery=AWARD_GALLERY)
+
+
 @app.get("/articles/<slug>")
 def article(slug: str):
     item = store.get_article(slug)
     if not item or (not item["published"] and session.get("role") not in {"admin", "superadmin"}):
         abort(404)
+    if item.get("direct_link"):
+        if not valid_direct_url(item["external_url"]):
+            abort(404)
+        return redirect(item["external_url"])
     award_gallery = []
     if item["slug"] == "2026-awards":
-        award_gallery = [
-            {"label": "一队 · 障碍赛一等奖", "preview": "/media/pages/2026RC/一队_障碍赛_一等奖.webp", "pdf": "/media/pages/2026RC/一队_障碍赛_一等奖.pdf"},
-            {"label": "一队 · 任务赛三等奖", "preview": "/media/pages/2026RC/一队_任务赛_三等奖.webp", "pdf": "/media/pages/2026RC/一队_任务赛_三等奖.pdf"},
-            {"label": "二队 · 障碍赛二等奖", "preview": "/media/pages/2026RC/二队_障碍赛_二等奖.webp", "pdf": "/media/pages/2026RC/二队_障碍赛_二等奖.pdf"},
-            {"label": "二队 · 任务赛三等奖", "preview": "/media/pages/2026RC/二队_任务赛_三等奖.webp", "pdf": "/media/pages/2026RC/二队_任务赛_三等奖.pdf"},
-        ]
+        award_gallery = AWARD_GALLERY
     return render_template("articles/detail.html", article=item, content_blocks=article_content_blocks(item["content"]), award_gallery=award_gallery, comments=store.list_comments(item["id"]))
 
 
@@ -400,17 +429,28 @@ def slugify(title: str) -> str:
 @admin_required
 def new_article():
     if request.method == "POST":
-        data = {key: request.form.get(key, "").strip() for key in ("title", "category", "summary", "content", "external_url", "external_label")}
-        if not valid_external_url(data["external_url"]):
-            flash("跳转链接仅支持 http、https 或 weixin://", "error")
-            return render_template("admin/editor.html", article=data, mode="new", media_files=uploaded_media())
-        if len(data["title"]) < 2 or len(data["summary"]) < 10 or len(data["content"]) < 20:
-            flash("标题、摘要或正文内容过短", "error")
-            return render_template("admin/editor.html", article=data, mode="new", media_files=uploaded_media())
-        item = store.create_article(**data, slug=slugify(data["title"]), published=request.form.get("published") == "on")
+        data = {key: request.form.get(key, "").strip() for key in ("title", "category", "summary", "external_url", "created_at")}
+        data["direct_link"] = True
+        data["content"] = ""
+        data["external_label"] = "打开链接"
+        data["published"] = request.form.get("published") == "on"
+        try:
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", data["created_at"]):
+                raise ValueError
+            datetime.strptime(data["created_at"], "%Y-%m-%d")
+        except ValueError:
+            flash("请选择有效的显示日期", "error")
+            return render_template("admin/editor.html", article=data, mode="new")
+        if not valid_direct_url(data["external_url"]):
+            flash("请填写完整的 http 或 https 跳转链接", "error")
+            return render_template("admin/editor.html", article=data, mode="new")
+        if len(data["title"]) < 2 or len(data["summary"]) < 10:
+            flash("标题至少 2 个字，摘要至少 10 个字", "error")
+            return render_template("admin/editor.html", article=data, mode="new")
+        item = store.create_article(**data, slug=slugify(data["title"]))
         flash("文章已发布", "success")
-        return redirect(url_for("article", slug=item["slug"]))
-    return render_template("admin/editor.html", article={}, mode="new", media_files=uploaded_media())
+        return redirect(url_for("admin") + "#recent-stories")
+    return render_template("admin/editor.html", article={"created_at": datetime.now().strftime("%Y-%m-%d")}, mode="new")
 
 
 @app.route("/admin/articles/<int:article_id>/edit", methods=["GET", "POST"])
@@ -420,17 +460,28 @@ def edit_article(article_id: int):
     if not item:
         abort(404)
     if request.method == "POST":
-        data = {key: request.form.get(key, "").strip() for key in ("title", "category", "summary", "content", "external_url", "external_label")}
-        if not valid_external_url(data["external_url"]):
-            flash("跳转链接仅支持 http、https 或 weixin://", "error")
-            return render_template("admin/editor.html", article={**item, **data}, mode="edit", media_files=uploaded_media())
-        if len(data["title"]) < 2 or len(data["summary"]) < 10 or len(data["content"]) < 20:
-            flash("标题、摘要或正文内容过短", "error")
-            return render_template("admin/editor.html", article={**item, **data}, mode="edit", media_files=uploaded_media())
-        store.update_article(article_id, **data, published=request.form.get("published") == "on")
+        data = {key: request.form.get(key, "").strip() for key in ("title", "category", "summary", "external_url", "created_at")}
+        data["direct_link"] = True
+        data["content"] = item["content"]
+        data["external_label"] = item["external_label"] or "打开链接"
+        data["published"] = request.form.get("published") == "on"
+        try:
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", data["created_at"]):
+                raise ValueError
+            datetime.strptime(data["created_at"], "%Y-%m-%d")
+        except ValueError:
+            flash("请选择有效的显示日期", "error")
+            return render_template("admin/editor.html", article={**item, **data}, mode="edit")
+        if not valid_direct_url(data["external_url"]):
+            flash("请填写完整的 http 或 https 跳转链接", "error")
+            return render_template("admin/editor.html", article={**item, **data}, mode="edit")
+        if len(data["title"]) < 2 or len(data["summary"]) < 10:
+            flash("标题至少 2 个字，摘要至少 10 个字", "error")
+            return render_template("admin/editor.html", article={**item, **data}, mode="edit")
+        store.update_article(article_id, **data)
         flash("文章已更新", "success")
         return redirect(url_for("admin"))
-    return render_template("admin/editor.html", article=item, mode="edit", media_files=uploaded_media())
+    return render_template("admin/editor.html", article=item, mode="edit")
 
 
 @app.post("/admin/media/upload")
@@ -460,7 +511,7 @@ def edit_gsing_page():
         external_label = request.form.get("external_label", "").strip() or "联系我们"
         content = request.form.get("content", "").strip()
         if not valid_external_url(external_url):
-            flash("跳转链接仅支持 http、https 或 weixin://", "error")
+            flash("直接跳转需填写完整的 http 或 https 链接；文章内按钮另支持 weixin://", "error")
         else:
             store.update_page_settings("gsing", external_url, external_label, content)
             flash("GSing 专题页链接已更新", "success")

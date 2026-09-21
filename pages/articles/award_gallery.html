@@ -1,0 +1,1 @@
+<div class="award-gallery">{% for award in award_gallery %}<a href="{{ award.preview }}" target="_blank" rel="noopener noreferrer"><div class="award-preview"><img src="{{ award.preview }}" alt="{{ award.label }}" loading="lazy" decoding="async"></div><strong>{{ award.label }}</strong><span>查看大图 ↗</span></a>{% endfor %}</div>

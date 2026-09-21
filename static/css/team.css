@@ -1,0 +1,37 @@
+.blank-team-page { min-height: calc(100vh - 190px); padding: 90px 0; }
+.blank-team-page h1 { margin: 0 0 40px; }
+.blank-team-page .article-body { max-width: 900px; }
+.blank-team-page .article-media { display: block; width: 100%; max-height: 720px; object-fit: contain; margin: 26px 0; border-radius: 16px; }
+.blank-team-page .article-external { display: inline-block; margin: 15px 0; padding: 11px 17px; border-radius: 8px; background: var(--green); color: white; }
+
+/* Team history, public rosters and five group introductions. */
+.team-lead { max-width: 780px; color: var(--muted); font-size: 17px; line-height: 1.9; }
+.team-timeline { margin: 48px 0 64px; border-left: 2px solid var(--line); padding-left: 32px; max-width: 920px; }
+.team-timeline section { position: relative; margin-bottom: 42px; }
+.team-timeline section::before { content: ""; position: absolute; left: -39px; top: 5px; width: 12px; height: 12px; border-radius: 50%; background: var(--green); }
+.team-timeline h2,.group-detail-grid h2,.team-join h2 { font-size: 24px; line-height: 1.5; }
+.team-timeline p,.group-detail-grid p,.group-detail-grid li,.team-join p { line-height: 1.9; }
+.team-rosters { margin: 60px 0; }
+.team-roster { margin: 16px 0; border: 1px solid var(--line); border-radius: 14px; background: #fff; overflow: hidden; }
+.team-roster summary { cursor: pointer; padding: 22px; font-size: 18px; font-weight: 700; }
+.team-roster summary span { margin-left: 12px; font-size: 12px; font-weight: 400; color: var(--muted); }
+.team-table-scroll { overflow-x: auto; padding: 0 22px 22px; }
+.team-roster table { border-collapse: collapse; width: 100%; min-width: 760px; text-align: left; font-size: 14px; }
+.team-roster caption { text-align: left; color: var(--muted); padding: 0 0 12px; font-size: 12px; }
+.team-roster th,.team-roster td { padding: 14px 12px; border-bottom: 1px solid var(--line); }
+.team-roster thead { background: var(--paper); }
+.team-roster tbody th { white-space: nowrap; }
+.team-group-page { padding: 70px 0; }
+.team-group-page h1 { margin: 12px 0; font-size: clamp(36px,6vw,64px); }
+.team-tagline { font-size: 22px; color: var(--green); }
+.group-detail-grid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 24px; margin: 40px 0; }
+.group-detail-grid section { padding: 28px; background: #fff; border: 1px solid var(--line); border-radius: 16px; }
+.group-detail-grid ul { padding-left: 22px; }
+.group-detail-grid li + li { margin-top: 16px; }
+.team-join { padding: 32px; border-radius: 16px; background: #eaf0e4; }
+.recruitment-flow { color: var(--green); }
+.team-group-nav { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 35px; }
+.team-group-nav a { border: 1px solid var(--line); padding: 10px 18px; border-radius: 999px; }
+.team-group-nav a[aria-current="page"] { background: var(--green); color: #fff; }
+.recruitment-story { border-color: var(--green) !important; }
+@media(max-width:650px) { .group-detail-grid { grid-template-columns: 1fr; } .team-group-page,.blank-team-page { padding: 45px 0; } .team-timeline { padding-left: 24px; } .team-timeline section::before { left: -31px; } .team-join { padding: 24px; } }

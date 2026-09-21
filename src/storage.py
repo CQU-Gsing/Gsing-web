@@ -115,6 +115,14 @@ class ArticleStore:
                 db.execute("ALTER TABLE articles ADD COLUMN external_url TEXT NOT NULL DEFAULT ''")
             if "external_label" not in article_columns:
                 db.execute("ALTER TABLE articles ADD COLUMN external_label TEXT NOT NULL DEFAULT ''")
+            if "direct_link" not in article_columns:
+                db.execute("ALTER TABLE articles ADD COLUMN direct_link INTEGER NOT NULL DEFAULT 0")
+                db.execute("""INSERT OR IGNORE INTO articles
+                    (slug,title,category,summary,content,published,external_url,external_label,direct_link)
+                    VALUES(?,?,?,?,?,1,?,?,1)""", (
+                    "2027-recruitment", "2027 赛季二队报名", "招新报名",
+                    "面向 2026 级大一新生，机械、硬件、电控、视觉与宣运五个方向等你加入。填写报名问卷，提交即完成报名。",
+                    "", "https://docs.qq.com/form/page/DRGptdHB1SERpSEx4", "立即报名"))
             page_columns = {row[1] for row in db.execute("PRAGMA table_info(page_settings)").fetchall()}
             if "content" not in page_columns:
                 db.execute("ALTER TABLE page_settings ADD COLUMN content TEXT NOT NULL DEFAULT ''")
@@ -223,19 +231,19 @@ class ArticleStore:
             row = db.execute("SELECT * FROM articles WHERE id = ?", (article_id,)).fetchone()
         return dict(row) if row else None
 
-    def create_article(self, *, slug, title, category, summary, content, published, external_url="", external_label=""):
+    def create_article(self, *, slug, title, category, summary, content, published, external_url="", external_label="", direct_link=False, created_at=None):
         unique_slug = slug
         with self.connect() as db:
             index = 2
             while db.execute("SELECT 1 FROM articles WHERE slug = ?", (unique_slug,)).fetchone():
                 unique_slug = f"{slug}-{index}"; index += 1
-            cursor = db.execute("INSERT INTO articles(slug,title,category,summary,content,published,external_url,external_label) VALUES(?,?,?,?,?,?,?,?)", (unique_slug, title, category, summary, content, int(published), external_url, external_label))
+            cursor = db.execute("INSERT INTO articles(slug,title,category,summary,content,published,external_url,external_label,direct_link,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)", (unique_slug, title, category, summary, content, int(published), external_url, external_label, int(direct_link), created_at or datetime.now().isoformat(sep=" ", timespec="seconds")))
             article_id = cursor.lastrowid
         return self.get_article_by_id(article_id)
 
-    def update_article(self, article_id, *, title, category, summary, content, published, external_url="", external_label=""):
+    def update_article(self, article_id, *, title, category, summary, content, published, external_url="", external_label="", direct_link=False, created_at=None):
         with self.connect() as db:
-            db.execute("UPDATE articles SET title=?,category=?,summary=?,content=?,published=?,external_url=?,external_label=?,updated_at=? WHERE id=?", (title, category, summary, content, int(published), external_url, external_label, datetime.now().isoformat(timespec="seconds"), article_id))
+            db.execute("UPDATE articles SET title=?,category=?,summary=?,content=?,published=?,external_url=?,external_label=?,direct_link=?,created_at=COALESCE(?,created_at),updated_at=? WHERE id=?", (title, category, summary, content, int(published), external_url, external_label, int(direct_link), created_at, datetime.now().isoformat(timespec="seconds"), article_id))
 
     def get_page_settings(self, page_key):
         with self.connect() as db:

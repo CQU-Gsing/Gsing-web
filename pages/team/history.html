@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+{% block title %}战队历史｜GSing{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static',filename='css/team.css') }}?v=20260921-team-history">{% endblock %}
+{% block body %}
+
+<main><section class="blank-team-page"><p class="eyebrow">OUR JOURNEY</p><h1>战队历史</h1><p class="team-lead">记录 GSing 的历史获奖与历届队员。</p>
+<div class="team-timeline">
+  <section><p class="eyebrow">2026 · ROBOCON</p><h2>历史获奖 · 2026 赛季</h2><p>第二十五届全国大学生机器人大赛 ROBOCON 仿生足式机器人挑战赛中，一队获得障碍赛一等奖、任务赛三等奖；二队获得障碍赛二等奖、任务赛三等奖。</p><a class="profile-link" href="{{ url_for('awards_2026') }}">查看获奖证书 ↗</a></section>
+</div>
+<section class="team-rosters" aria-labelledby="roster-title"><p class="eyebrow">TEAM MEMBERS</p><h2 id="roster-title">历届队员</h2>
+{% for season in team_content.seasons %}<details class="team-roster" {% if loop.first %}open{% endif %}><summary>{{ season.title }} <span>{{ season.members|length }} 位队员</span></summary><div class="team-table-scroll"><table><caption>{{ season.title }}队员名单</caption><thead><tr><th scope="col">姓名</th><th scope="col">职位</th><th scope="col">学院</th><th scope="col">专业</th><th scope="col">年级</th></tr></thead><tbody>{% for member in season.members %}<tr><th scope="row">{{ member.name }}</th><td>{{ member.role }}</td><td>{{ member.college }}</td><td>{{ member.major }}</td><td>{{ member.grade }}</td></tr>{% endfor %}</tbody></table></div></details>{% endfor %}
+</section>
+</section></main>
+{% endblock %}
