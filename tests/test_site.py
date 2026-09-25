@@ -74,7 +74,64 @@ class SiteTests(unittest.TestCase):
     def test_private_sources_not_served(self):
         with self.app.test_client() as client:
             for route in ["/pages/main.md", "/docs/private/team-source.md", "/media/../docs/private/team-source.md"]:
-                self.assertEqual(client.get(route).status_code, 404)
+                self.assertEqual(client.get(route).status_code, 403)
+
+    def test_community_times_are_china_time(self):
+        from datetime import datetime, timezone, timedelta
+        from src.storage import community_record
+        article = self.store.get_article("2026-awards")
+        with self.store.connect() as db:
+            db.execute("INSERT INTO comments(article_id,username,content,created_at) VALUES(?,?,?,?)",
+                       (article["id"], "test", "timezone-check", "2026-12-31 20:15:00"))
+            db.execute("INSERT INTO messages(username,content,created_at) VALUES(?,?,?)",
+                       ("test", "timezone-check", "2026-12-31 20:15:00"))
+        for records in [self.store.list_comments(article["id"]), self.store.list_messages()]:
+            record = next(row for row in records if row["content"] == "timezone-check")
+            self.assertEqual(record["created_at"], "2027-01-01 04:15:00+08:00")
+            self.assertEqual(community_record(record)["created_at"], record["created_at"])
+        before = datetime.now(timezone.utc)
+        self.store.add_comment(article["id"], None, "test", "new-time-check")
+        self.store.add_message(None, "test", "new-time-check")
+        after = datetime.now(timezone.utc)
+        for records in [self.store.list_comments(), self.store.list_messages()]:
+            record = next(row for row in records if row["content"] == "new-time-check")
+            timestamp = datetime.fromisoformat(record["created_at"])
+            self.assertEqual(timestamp.utcoffset(), timedelta(hours=8))
+            self.assertLessEqual(before - timedelta(seconds=1), timestamp)
+            self.assertLessEqual(timestamp, after)
+        with self.app.test_client() as client:
+            for route in ["/articles/2026-awards", "/message-board"]:
+                html = client.get(route).get_data(as_text=True)
+                self.assertIn("2027-01-01 04:15", html)
+                self.assertIn('datetime="2027-01-01T04:15:00+08:00"', html)
+                self.assertIn("北京时间", html)
+
+    def test_scan_paths_blocked_without_visit_writes(self):
+        paths = ["/.git/config", "/.env", "/.env.local", "/.env.production", "/.env.staging", "/.env.development",
+                 "/media/.env", "/STATIC/.GIT/config", "/%252eenv", "/static/%252e%252e/data/site.db",
+                 "/media/%5c..%5c.env", "/data/site.db", "/src/storage.py", "/logs/access.log",
+                 "/wp-login.php", "/phpmyadmin/", "/.env%00", "/main.py"]
+        with self.app.test_client() as client, patch.object(self.store, "record_visit") as record, patch.object(self.main, "format_ip_city") as locate:
+            for method in ["GET", "HEAD", "POST"]:
+                for path in paths:
+                    with self.subTest(path=path, method=method):
+                        response = client.open(path, method=method)
+                        self.assertEqual(response.status_code, 403)
+                        self.assertEqual(response.headers["Cache-Control"], "no-store")
+            record.assert_not_called()
+            locate.assert_not_called()
+
+    def test_guard_does_not_block_public_paths_or_queries(self):
+        from src.request_guard import blocked_path_reason
+        for path in ["/", "/admin", "/login", "/register", "/api/email-code", "/message-board",
+                     "/media/pages/2026RC/一队_任务赛_三等奖.webp", "/static/css/base.css",
+                     "/articles/env-guide", "/.well-known/acme-challenge/token"]:
+            self.assertIsNone(blocked_path_reason(path), path)
+        with self.app.test_client() as client:
+            self.assertEqual(client.get("/?next=/.env").status_code, 200)
+            # No IP ban: a legitimate request still works after a blocked probe.
+            client.get("/.env")
+            self.assertEqual(client.get("/").status_code, 200)
 
     def test_team_layout_is_focused(self):
         css = (ROOT / "static/css/team.css").read_text(encoding="utf-8")

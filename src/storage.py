@@ -3,10 +3,23 @@ from __future__ import annotations
 import sqlite3
 import secrets
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from werkzeug.security import check_password_hash, generate_password_hash
+
+
+CHINA_TIME = timezone(timedelta(hours=8))
+
+
+def community_record(row):
+    """SQLite CURRENT_TIMESTAMP stores UTC; expose community times in UTC+8."""
+    record = dict(row)
+    timestamp = datetime.fromisoformat(record["created_at"])
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    record["created_at"] = timestamp.astimezone(CHINA_TIME).isoformat(sep=" ", timespec="seconds")
+    return record
 
 
 class ArticleStore:
@@ -261,7 +274,7 @@ class ArticleStore:
             sql += " WHERE article_id=?"; params = (article_id,)
         sql += " ORDER BY created_at DESC,id DESC"
         with self.connect() as db:
-            return [dict(row) for row in db.execute(sql, params).fetchall()]
+            return [community_record(row) for row in db.execute(sql, params).fetchall()]
 
     def add_comment(self, article_id, user_id, username, content):
         with self.connect() as db:
@@ -273,7 +286,7 @@ class ArticleStore:
 
     def list_messages(self):
         with self.connect() as db:
-            return [dict(row) for row in db.execute("SELECT * FROM messages ORDER BY created_at DESC,id DESC").fetchall()]
+            return [community_record(row) for row in db.execute("SELECT * FROM messages ORDER BY created_at DESC,id DESC").fetchall()]
 
     def add_message(self, user_id, username, content):
         with self.connect() as db:

@@ -14,6 +14,7 @@ from pathlib import Path
 
 from flask import Flask, abort, flash, g, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 
+from src.request_guard import blocked_path_reason
 from src.storage import ArticleStore
 from src.ip_location import format_ip_city
 from src.mail_service import send_verify_code
@@ -125,12 +126,21 @@ def article_content_blocks(content: str):
 @app.before_request
 def start_request_timer():
     g.request_started_at = time.perf_counter()
+    g.blocked_path_reason = blocked_path_reason(request.path)
+    if g.blocked_path_reason:
+        return "Forbidden\n", 403, {"Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
 
 
 @app.after_request
 def log_access(response):
     elapsed_ms = (time.perf_counter() - getattr(g, "request_started_at", time.perf_counter())) * 1000
     ip = real_client_ip().replace("\n", "").replace("\r", "")[:64]
+    if getattr(g, "blocked_path_reason", None):
+        safe_path = json.dumps(request.path[:300], ensure_ascii=True)
+        line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} 🚫 路径扫描拦截 [{ip}] | {request.method} {safe_path} | 403 | {g.blocked_path_reason} | {elapsed_ms:.1f}ms"
+        access_logger.warning(line)
+        print(line, file=sys.stdout, flush=True)
+        return response
     location = format_ip_city(ip)
     user_agent = request.user_agent.string.replace("\n", " ").replace("\r", " ")[:120]
     username = session.get("username") or "游客"
