@@ -7,6 +7,7 @@ import logging
 import sys
 import time
 import uuid
+import secrets
 from datetime import datetime
 from functools import wraps
 from urllib.parse import urlsplit
@@ -14,6 +15,7 @@ from pathlib import Path
 
 from flask import Flask, abort, flash, g, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 
+from src.polls import POLL_ID, POLL_TITLE, POLL_OPTIONS, POLL_CLOSE, china_now
 from src.request_guard import blocked_path_reason
 from src.storage import ArticleStore
 from src.ip_location import format_ip_city
@@ -25,7 +27,7 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 BASE_DIR = Path(__file__).resolve().parent
-TEAM_CONTENT = json.loads((BASE_DIR / "content" / "team.json").read_text(encoding="utf-8"))
+TEAM_CONTENT = json.loads((BASE_DIR / "data" / "team.json").read_text(encoding="utf-8"))
 AWARD_GALLERY = [
     {"label": "一队 · 障碍赛一等奖", "preview": "/media/pages/2026RC/一队_障碍赛_一等奖.webp"},
     {"label": "一队 · 任务赛三等奖", "preview": "/media/pages/2026RC/一队_任务赛_三等奖.webp"},
@@ -51,7 +53,7 @@ def build_access_logger():
 
 
 access_logger = build_access_logger()
-app = Flask(__name__, static_folder="static", template_folder="pages")
+app = Flask(__name__, static_folder=None, template_folder="pages")
 app.config.update(
     SECRET_KEY=os.environ.get("GSING_SECRET_KEY", "dev-change-this-secret-before-deploy"),
     SESSION_COOKIE_HTTPONLY=True,
@@ -127,6 +129,11 @@ def article_content_blocks(content: str):
 def start_request_timer():
     g.request_started_at = time.perf_counter()
     g.blocked_path_reason = blocked_path_reason(request.path)
+    raw_target = request.environ.get("RAW_URI") or request.environ.get("REQUEST_URI")
+    if raw_target and not g.blocked_path_reason:
+        g.blocked_path_reason = blocked_path_reason(raw_target.split("?", 1)[0])
+    if request.method in {"TRACE", "CONNECT", "TRACK"}:
+        g.blocked_path_reason = "unsafe-method"
     if g.blocked_path_reason:
         return "Forbidden\n", 403, {"Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
 
@@ -141,15 +148,15 @@ def log_access(response):
         access_logger.warning(line)
         print(line, file=sys.stdout, flush=True)
         return response
+    if request.path.casefold().startswith(("/assets/", "/media/", "/static/")) or request.path.casefold() in {"/favicon.ico", "/robots.txt"}:
+        return response
     location = format_ip_city(ip)
     user_agent = request.user_agent.string.replace("\n", " ").replace("\r", " ")[:120]
     username = session.get("username") or "游客"
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-    path = request.full_path.rstrip("?")
+    path = request.path
     if request.path == "/":
         request_icon = "🏠"
-    elif request.path.startswith(("/static/", "/media/")):
-        request_icon = "📡"
     elif request.path.startswith(("/login", "/register", "/logout")):
         request_icon = "🔐"
     elif request.path.startswith("/admin"):
@@ -239,6 +246,59 @@ def legacy_home():
 @app.get("/pages/devlog/")
 def legacy_devlog():
     return redirect(url_for("home") + "#stories", code=301)
+
+
+PAGE_ASSETS = {
+    "shared/base.css", "shared/theme.css", "shared/site-chrome.js",
+    "home/home.css", "home/home.js", "team/team.css",
+    "login/auth.css", "login/auth-email.js", "admin/media-editor.js",
+    "admin/admin.css", "polls/poll.css",
+}
+
+@app.get("/assets/<path:filename>")
+def page_asset(filename):
+    if filename not in PAGE_ASSETS:
+        abort(404)
+    return send_from_directory(BASE_DIR / "pages", filename)
+
+
+@app.route("/polls/vision-training/", methods=["GET", "POST"])
+def vision_training_poll():
+    vote = store.get_poll_vote(POLL_ID, session["user_id"]) if session.get("user_id") else None
+    session.setdefault("poll_csrf", secrets.token_urlsafe(32))
+    team_name = vote["team_name"] if vote else ""
+    selected = vote["choices"] if vote else []
+    closed = china_now() >= POLL_CLOSE
+    status = 200
+    if request.method == "POST":
+        if not session.get("user_id"):
+            return redirect(url_for("login", next=request.path))
+        if not secrets.compare_digest(request.form.get("csrf_token", ""), session["poll_csrf"]):
+            abort(400)
+        team_name = request.form.get("team_name", "").strip()
+        selected = request.form.getlist("choices")
+        result = store.save_poll_vote(session["user_id"], team_name, selected)
+        if result == "saved":
+            flash("投票已保存，截止前可再次修改。", "success")
+            return redirect(url_for("vision_training_poll"))
+        if result == "closed":
+            closed = True
+            flash("投票已截止，无法提交或修改。", "error")
+        elif result == "user-missing":
+            session.clear()
+            return redirect(url_for("login", next=request.path))
+        else:
+            flash("请填写 1–60 字的队名，并至少选择一个有效时间。", "error")
+        status = 400
+    return render_template("polls/index.html", title=POLL_TITLE, options=POLL_OPTIONS,
+                           vote=vote, team_name=team_name, selected=selected, closed=closed), status
+
+
+@app.get("/admin/polls/vision-training/")
+@admin_required
+def training_poll_results():
+    return render_template("admin/poll_results.html", results=store.poll_results(),
+                           labels=dict(POLL_OPTIONS), closed=china_now() >= POLL_CLOSE)
 
 
 @app.get("/media/<path:filename>")
@@ -353,6 +413,8 @@ def article(slug: str):
     item = store.get_article(slug)
     if not item or (not item["published"] and session.get("role") not in {"admin", "superadmin"}):
         abort(404)
+    if item["slug"] == POLL_ID:
+        return redirect(url_for("vision_training_poll"))
     if item.get("direct_link"):
         if not valid_direct_url(item["external_url"]):
             abort(404)
@@ -396,7 +458,7 @@ def message_board():
 @app.get("/admin")
 @admin_required
 def admin():
-    return render_template("admin/index.html", articles=store.list_articles(), users=store.list_users() if session.get("role") == "superadmin" else [], comments=store.list_comments(), messages=store.list_messages())
+    return render_template("admin/index.html", poll_results=store.poll_results(), articles=store.list_articles(), users=store.list_users() if session.get("role") == "superadmin" else [], comments=store.list_comments(), messages=store.list_messages())
 
 
 @app.post("/admin/comments/<int:comment_id>/delete")

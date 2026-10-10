@@ -53,7 +53,7 @@ next-env.d.ts
 /logs/*.log
 /data/qq_mail_auth_code.txt
 # Raw rosters and reference material may contain personal information.
-/docs/private/
+/data/team-source.md
 
 # Python bytecode in any package or test directory.
 __pycache__/

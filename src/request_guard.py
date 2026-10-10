@@ -3,9 +3,9 @@ import re
 from urllib.parse import unquote
 
 _PRIVATE_ROOTS = {"src", "data", "logs", "content", "tests", "__pycache__"}
-_PRIVATE_FILES = {"main.py", "web.cmd", "requirements.txt", "pyproject.toml", "poetry.lock", "config.py", "settings.py"}
-_SCAN_ROOTS = {"wp-admin", "wp-includes", "phpmyadmin", "pma", "cgi-bin"}
-_PRIVATE_SUFFIXES = (".db", ".sqlite", ".sqlite3", ".sql", ".bak", ".ini", ".log", ".pyc")
+_PRIVATE_FILES = {"main.py", "web.cmd", "requirements.txt", "pyproject.toml", "poetry.lock", "config.py", "settings.py", "dockerfile", "docker-compose.yml", "compose.yml", "package.json", "package-lock.json", "web.config"}
+_SCAN_ROOTS = {"wp-admin", "wp-includes", "phpmyadmin", "pma", "cgi-bin", "vendor", "actuator", "server-status", "server-info", "debug", "console", "jenkins", "solr", "boaform"}
+_PRIVATE_SUFFIXES = (".db", ".sqlite", ".sqlite3", ".sql", ".bak", ".ini", ".log", ".py", ".pyc", ".pem", ".key", ".pfx", ".p12", ".yaml", ".yml", ".toml", ".conf", ".cmd", ".bat", ".ps1", ".sh", ".old", ".orig", ".swp")
 
 
 def blocked_path_reason(path: str):
@@ -25,6 +25,8 @@ def blocked_path_reason(path: str):
         return None
     if any(part in {".", ".."} or ":" in part for part in segments):
         return "path-traversal"
+    if any(part != part.rstrip(" .") for part in segments):
+        return "ambiguous-path"
     for index, part in enumerate(segments):
         if part.startswith(".") and not (index == 0 and part == ".well-known"):
             return "hidden-file"

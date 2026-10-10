@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% block title %}{{ '编辑动态' if mode=='edit' else '新增动态' }}｜GSing{% endblock %}
-{% block body %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('page_asset',filename='admin/admin.css',v='20261010') }}">{% endblock %}{% block body %}
 <main class="admin-shell"><header class="admin-top"><a href="{{ url_for('admin') }}#recent-stories">← 返回最近动态管理</a><span>{{ admin_name }}</span></header>
 <section class="editor-card"><p class="eyebrow">HOMEPAGE FIELD NOTES</p><h1>{{ '编辑最近动态' if mode=='edit' else '新增最近动态' }}</h1><p>填写动态信息和跳转链接，访客点击首页卡片后直接打开目标页面。</p>
 <form method="post">

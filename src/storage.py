@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import secrets
 import time
@@ -38,6 +39,15 @@ class ArticleStore:
     def _init_schema(self):
         with self.connect() as db:
             db.executescript("""
+                CREATE TABLE IF NOT EXISTS poll_votes (
+                    poll_id TEXT NOT NULL,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    team_name TEXT NOT NULL,
+                    choices TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(poll_id, user_id)
+                );
+                CREATE TABLE IF NOT EXISTS content_migrations (name TEXT PRIMARY KEY);
                 CREATE TABLE IF NOT EXISTS admins (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     username TEXT NOT NULL UNIQUE,
@@ -136,6 +146,14 @@ class ArticleStore:
                     "2027-recruitment", "2027 赛季二队报名", "招新报名",
                     "面向 2026 级大一新生，机械、硬件、电控、视觉与宣运五个方向等你加入。填写报名问卷，提交即完成报名。",
                     "", "https://docs.qq.com/form/page/DRGptdHB1SERpSEx4", "立即报名"))
+            if not db.execute("SELECT 1 FROM content_migrations WHERE name='vision-training-202610'").fetchone():
+                db.execute("""INSERT OR IGNORE INTO articles
+                    (slug,title,category,summary,content,published,created_at)
+                    VALUES(?,?,?,?,?,1,?)""", (
+                    "vision-training-202610", "视觉组培训时间投票", "组内培训",
+                    "请选择所有能参加的时间，登录账号后填写队名投票。无法参加的队员，后续会提供培训录屏和 PPT。截止：2026 年 10 月 10 日 23:59（北京时间）。",
+                    "", "2026-10-10 00:00:00"))
+                db.execute("INSERT INTO content_migrations(name) VALUES('vision-training-202610')")
             page_columns = {row[1] for row in db.execute("PRAGMA table_info(page_settings)").fetchall()}
             if "content" not in page_columns:
                 db.execute("ALTER TABLE page_settings ADD COLUMN content TEXT NOT NULL DEFAULT ''")
@@ -318,3 +336,38 @@ class ArticleStore:
         with self.connect() as db:
             row = db.execute("SELECT value FROM site_stats WHERE name='visit_count'").fetchone()
         return row[0] if row else 0
+
+    def get_poll_vote(self, poll_id, user_id):
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM poll_votes WHERE poll_id=? AND user_id=?", (poll_id, user_id)).fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        result["choices"] = json.loads(result["choices"])
+        return result
+
+    def save_poll_vote(self, user_id, team_name, choices):
+        from src.polls import POLL_ID, POLL_OPTIONS, POLL_CLOSE, china_now
+        allowed = {key for key, _ in POLL_OPTIONS}
+        choices = list(dict.fromkeys(choices))
+        if not 1 <= len(team_name) <= 60 or any(ord(c) < 32 for c in team_name) or not choices or not set(choices) <= allowed:
+            return "invalid"
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            now = china_now()
+            if now >= POLL_CLOSE:
+                return "closed"
+            if not db.execute("SELECT 1 FROM users WHERE id=?", (user_id,)).fetchone():
+                return "user-missing"
+            db.execute("""INSERT INTO poll_votes(poll_id,user_id,team_name,choices,updated_at) VALUES(?,?,?,?,?)
+                ON CONFLICT(poll_id,user_id) DO UPDATE SET team_name=excluded.team_name,choices=excluded.choices,updated_at=excluded.updated_at""",
+                (POLL_ID, user_id, team_name, json.dumps(choices), now.isoformat(timespec="seconds")))
+        return "saved"
+
+    def poll_results(self):
+        from src.polls import POLL_ID, POLL_OPTIONS
+        with self.connect() as db:
+            rows = db.execute("SELECT v.*,u.username FROM poll_votes v JOIN users u ON u.id=v.user_id WHERE poll_id=? ORDER BY updated_at DESC", (POLL_ID,)).fetchall()
+        votes = [dict(row, choices=json.loads(row["choices"])) for row in rows]
+        counts = [{"label": label, "count": sum(key in vote["choices"] for vote in votes)} for key, label in POLL_OPTIONS]
+        return {"votes": votes, "counts": counts, "total": len(votes)}
