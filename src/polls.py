@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 CHINA_TIME = timezone(timedelta(hours=8))
 POLL_ID = "vision-training-202610"
-POLL_TITLE = "视觉组培训时间投票"
+POLL_TITLE = "Gsing视觉组实训培训时间"
 # Accept votes through the entire 23:59 minute on October 10.
 POLL_CLOSE = datetime(2026, 10, 11, 0, 0, tzinfo=CHINA_TIME)
 POLL_OPTIONS = [
@@ -20,3 +20,8 @@ POLL_OPTIONS = [
 
 def china_now():
     return datetime.now(CHINA_TIME)
+
+POLLS = {
+    "vision-training": {"id": POLL_ID, "title": POLL_TITLE, "requires_team": True},
+    "vision-freshman-training": {"id": "freshman-training-202610", "title": "Gsing视觉组新生考核培训", "requires_team": False},
+}

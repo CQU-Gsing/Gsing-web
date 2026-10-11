@@ -154,6 +154,49 @@ class ArticleStore:
                     "请选择所有能参加的时间，登录账号后填写队名投票。无法参加的队员，后续会提供培训录屏和 PPT。截止：2026 年 10 月 10 日 23:59（北京时间）。",
                     "", "2026-10-10 00:00:00"))
                 db.execute("INSERT INTO content_migrations(name) VALUES('vision-training-202610')")
+            if not db.execute("SELECT 1 FROM content_migrations WHERE name='gsing-training-polls-v2'").fetchone():
+                from src.polls import POLLS
+                summary = "登录账号后选择所有能参加的时间，无需填写队名。无法参加的队员，后续会提供培训录屏和 PPT。截止：2026 年 10 月 10 日 23:59（北京时间）。"
+                db.execute("UPDATE articles SET title=?,summary=? WHERE slug=?", (POLLS["vision-training"]["title"],summary,POLLS["vision-training"]["id"]))
+                db.execute("""INSERT OR IGNORE INTO articles(slug,title,category,summary,content,published,created_at)
+                    VALUES(?,?,?,?,?,1,?)""", (POLLS["vision-freshman-training"]["id"],POLLS["vision-freshman-training"]["title"],"组内培训",summary,"","2026-10-10 00:00:00"))
+                db.execute("INSERT INTO content_migrations(name) VALUES('gsing-training-polls-v2')")
+            if not db.execute("SELECT 1 FROM content_migrations WHERE name='practical-training-team-required'").fetchone():
+                db.execute("UPDATE articles SET summary=REPLACE(summary,?,?) WHERE slug=?", (
+                    "登录账号后选择所有能参加的时间，无需填写队名。", "登录账号后填写队名，选择所有能参加的时间。", "vision-training-202610"))
+                db.execute("INSERT INTO content_migrations(name) VALUES('practical-training-team-required')")
+            if not db.execute("SELECT 1 FROM content_migrations WHERE name='vision-poll-titles-v3'").fetchone():
+                from src.polls import POLLS
+                for poll in POLLS.values():
+                    db.execute("UPDATE articles SET title=? WHERE slug=?", (poll["title"], poll["id"]))
+                db.execute("INSERT INTO content_migrations(name) VALUES('vision-poll-titles-v3')")
+            if not db.execute("SELECT 1 FROM content_migrations WHERE name='vision-training-resources-20261011'").fetchone():
+                resources = "\n".join([
+                    "2026 视觉组培训资料与录屏",
+                    "未能参加培训，或想再次复习的队员，可以下载课件并观看下方录屏。",
+                    "一、新生考核培训",
+                    "[[link:/media/pages/2026视觉组培训/GSing视觉组2026新生培训.pptx|下载新生培训 PPT]]",
+                    "[[video:/media/pages/2026视觉组培训/Gsing视觉组新生考核培训-2026-10-11 12-58-08.mp4]]",
+                    "[[link:/media/pages/2026视觉组培训/Gsing视觉组新生考核培训-2026-10-11 12-58-08.mp4|打开或下载新生考核培训录屏]]",
+                    "二、CRTC 实训培训 · YOLO 部署与一键抓取",
+                    "[[link:/media/pages/2026视觉组培训/CRTC视觉组培训_YOLO部署与一键抓取_v1.1.pptx|下载 CRTC 实训培训 PPT]]",
+                    "[[video:/media/pages/2026视觉组培训/Gsing视觉组CRTC实训培训-2026-10-11 13-34-33.mp4]]",
+                    "[[link:/media/pages/2026视觉组培训/Gsing视觉组CRTC实训培训-2026-10-11 13-34-33.mp4|打开或下载 CRTC 实训培训录屏]]",
+                ])
+                db.execute("""INSERT OR IGNORE INTO articles(slug,title,category,summary,content,published,created_at)
+                    VALUES(?,?,?,?,?,1,?)""", (
+                    "vision-training-resources-20261011", "2026 视觉组培训课件与录屏", "培训资料",
+                    "新生考核培训与 CRTC 实训培训资料已上线：下载两份 PPT，在线观看或下载培训录屏，方便补学与复习。",
+                    resources, "2026-10-11 00:00:00"))
+                db.execute("INSERT INTO content_migrations(name) VALUES('vision-training-resources-20261011')")
+            if not db.execute("SELECT 1 FROM content_migrations WHERE name='vision-training-resources-ppt-only'").fetchone():
+                row = db.execute("SELECT content FROM articles WHERE slug=?", ("vision-training-resources-20261011",)).fetchone()
+                if row:
+                    content = "\n".join(line for line in row["content"].splitlines() if ".mp4" not in line and not line.startswith("[[video:"))
+                    content = content.replace("2026 视觉组培训资料与录屏", "2026 视觉组培训课件").replace("可以下载课件并观看下方录屏。", "可以下载下方 PPT 课件进行补学与复习。")
+                    db.execute("UPDATE articles SET title=?,summary=?,content=? WHERE slug=?", (
+                        "2026 视觉组培训 PPT 课件", "新生考核培训与 CRTC 实训培训的两份 PPT 课件已上线，可下载补学与复习。", content, "vision-training-resources-20261011"))
+                db.execute("INSERT INTO content_migrations(name) VALUES('vision-training-resources-ppt-only')")
             page_columns = {row[1] for row in db.execute("PRAGMA table_info(page_settings)").fetchall()}
             if "content" not in page_columns:
                 db.execute("ALTER TABLE page_settings ADD COLUMN content TEXT NOT NULL DEFAULT ''")
@@ -346,11 +389,16 @@ class ArticleStore:
         result["choices"] = json.loads(result["choices"])
         return result
 
-    def save_poll_vote(self, user_id, team_name, choices):
-        from src.polls import POLL_ID, POLL_OPTIONS, POLL_CLOSE, china_now
+    def save_poll_vote(self, user_id, choices, poll_id="vision-training-202610", team_name=""):
+        from src.polls import POLLS, POLL_OPTIONS, POLL_CLOSE, china_now
         allowed = {key for key, _ in POLL_OPTIONS}
         choices = list(dict.fromkeys(choices))
-        if not 1 <= len(team_name) <= 60 or any(ord(c) < 32 for c in team_name) or not choices or not set(choices) <= allowed:
+        poll = next((item for item in POLLS.values() if item["id"] == poll_id), None)
+        team_name = team_name.strip() if poll and poll["requires_team"] else ""
+        if poll and poll["requires_team"] and (not 1 <= len(team_name) <= 60 or any(ord(c) < 32 for c in team_name)):
+            return "invalid"
+
+        if poll_id not in {poll["id"] for poll in POLLS.values()} or not choices or not set(choices) <= allowed:
             return "invalid"
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -361,13 +409,13 @@ class ArticleStore:
                 return "user-missing"
             db.execute("""INSERT INTO poll_votes(poll_id,user_id,team_name,choices,updated_at) VALUES(?,?,?,?,?)
                 ON CONFLICT(poll_id,user_id) DO UPDATE SET team_name=excluded.team_name,choices=excluded.choices,updated_at=excluded.updated_at""",
-                (POLL_ID, user_id, team_name, json.dumps(choices), now.isoformat(timespec="seconds")))
+                (poll_id, user_id, team_name, json.dumps(choices), now.isoformat(timespec="seconds")))
         return "saved"
 
-    def poll_results(self):
+    def poll_results(self, poll_id="vision-training-202610"):
         from src.polls import POLL_ID, POLL_OPTIONS
         with self.connect() as db:
-            rows = db.execute("SELECT v.*,u.username FROM poll_votes v JOIN users u ON u.id=v.user_id WHERE poll_id=? ORDER BY updated_at DESC", (POLL_ID,)).fetchall()
+            rows = db.execute("SELECT v.*,u.username FROM poll_votes v JOIN users u ON u.id=v.user_id WHERE poll_id=? ORDER BY updated_at DESC", (poll_id,)).fetchall()
         votes = [dict(row, choices=json.loads(row["choices"])) for row in rows]
         counts = [{"label": label, "count": sum(key in vote["choices"] for vote in votes)} for key, label in POLL_OPTIONS]
         return {"votes": votes, "counts": counts, "total": len(votes)}

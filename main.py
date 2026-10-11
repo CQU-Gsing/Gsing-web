@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import csv
+import io
 import json
 import re
 import logging
@@ -13,9 +15,9 @@ from functools import wraps
 from urllib.parse import urlsplit
 from pathlib import Path
 
-from flask import Flask, abort, flash, g, jsonify, redirect, render_template, request, send_from_directory, session, url_for
+from flask import Response, Flask, abort, flash, g, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 
-from src.polls import POLL_ID, POLL_TITLE, POLL_OPTIONS, POLL_CLOSE, china_now
+from src.polls import POLLS, POLL_ID, POLL_TITLE, POLL_OPTIONS, POLL_CLOSE, china_now
 from src.request_guard import blocked_path_reason
 from src.storage import ArticleStore
 from src.ip_location import format_ip_city
@@ -262,9 +264,15 @@ def page_asset(filename):
     return send_from_directory(BASE_DIR / "pages", filename)
 
 
-@app.route("/polls/vision-training/", methods=["GET", "POST"])
-def vision_training_poll():
-    vote = store.get_poll_vote(POLL_ID, session["user_id"]) if session.get("user_id") else None
+@app.route("/polls/vision-training/", defaults={"poll_slug": "vision-training"}, methods=["GET", "POST"])
+@app.route("/polls/<poll_slug>/", methods=["GET", "POST"])
+def vision_training_poll(poll_slug):
+    if poll_slug == "freshman-training":
+        return redirect(url_for("vision_training_poll", poll_slug="vision-freshman-training"), code=308)
+    poll = POLLS.get(poll_slug)
+    if not poll:
+        abort(404)
+    vote = store.get_poll_vote(poll["id"], session["user_id"]) if session.get("user_id") else None
     session.setdefault("poll_csrf", secrets.token_urlsafe(32))
     team_name = vote["team_name"] if vote else ""
     selected = vote["choices"] if vote else []
@@ -277,10 +285,10 @@ def vision_training_poll():
             abort(400)
         team_name = request.form.get("team_name", "").strip()
         selected = request.form.getlist("choices")
-        result = store.save_poll_vote(session["user_id"], team_name, selected)
+        result = store.save_poll_vote(session["user_id"], selected, poll["id"], team_name)
         if result == "saved":
             flash("投票已保存，截止前可再次修改。", "success")
-            return redirect(url_for("vision_training_poll"))
+            return redirect(url_for("vision_training_poll", poll_slug=poll_slug))
         if result == "closed":
             closed = True
             flash("投票已截止，无法提交或修改。", "error")
@@ -288,17 +296,47 @@ def vision_training_poll():
             session.clear()
             return redirect(url_for("login", next=request.path))
         else:
-            flash("请填写 1–60 字的队名，并至少选择一个有效时间。", "error")
+            flash("请填写 1–60 字的队名，并至少选择一个有效时间。" if poll["requires_team"] else "请至少选择一个有效时间。", "error")
         status = 400
-    return render_template("polls/index.html", title=POLL_TITLE, options=POLL_OPTIONS,
-                           vote=vote, team_name=team_name, selected=selected, closed=closed), status
+    return render_template("polls/index.html", poll=poll, team_name=team_name, title=poll["title"], options=POLL_OPTIONS,
+                           vote=vote, selected=selected, closed=closed), status
 
 
-@app.get("/admin/polls/vision-training/")
+@app.get("/admin/polls/vision-training/", defaults={"poll_slug": "vision-training"})
+@app.get("/admin/polls/<poll_slug>/")
 @admin_required
-def training_poll_results():
-    return render_template("admin/poll_results.html", results=store.poll_results(),
+def training_poll_results(poll_slug):
+    if poll_slug == "freshman-training":
+        return redirect(url_for("training_poll_results", poll_slug="vision-freshman-training"), code=308)
+    poll = POLLS.get(poll_slug)
+    if not poll:
+        abort(404)
+    return render_template("admin/poll_results.html", poll=poll, poll_slug=poll_slug, results=store.poll_results(poll["id"]),
                            labels=dict(POLL_OPTIONS), closed=china_now() >= POLL_CLOSE)
+
+
+@app.get("/admin/polls/vision-training/export.csv", defaults={"poll_slug": "vision-training"})
+@app.get("/admin/polls/<poll_slug>/export.csv")
+@admin_required
+def export_training_poll(poll_slug):
+    if poll_slug == "freshman-training":
+        return redirect(url_for("export_training_poll", poll_slug="vision-freshman-training"), code=308)
+    poll = POLLS.get(poll_slug)
+    if not poll:
+        abort(404)
+    results = store.poll_results(poll["id"])
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(["账号"] + (["队名"] if poll["requires_team"] else []) + ["最后提交（北京时间）"] + [label for _, label in POLL_OPTIONS])
+    def safe_cell(value):
+        value = str(value)
+        return "'" + value if value.lstrip().startswith(("=", "+", "-", "@")) or value.startswith(("\t", "\r", "\n")) else value
+    for vote in results["votes"]:
+        writer.writerow([safe_cell(vote["username"])] + ([safe_cell(vote["team_name"])] if poll["requires_team"] else []) + [vote["updated_at"].replace("T", " ")] +
+                        ["是" if key in vote["choices"] else "" for key, _ in POLL_OPTIONS])
+    return Response(output.getvalue().encode("utf-8-sig"), content_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{poll_slug}-votes-202610.csv"',
+                             "Cache-Control": "no-store"})
 
 
 @app.get("/media/<path:filename>")
@@ -413,8 +451,9 @@ def article(slug: str):
     item = store.get_article(slug)
     if not item or (not item["published"] and session.get("role") not in {"admin", "superadmin"}):
         abort(404)
-    if item["slug"] == POLL_ID:
-        return redirect(url_for("vision_training_poll"))
+    for slug, poll in POLLS.items():
+        if item["slug"] == poll["id"]:
+            return redirect(url_for("vision_training_poll", poll_slug=slug))
     if item.get("direct_link"):
         if not valid_direct_url(item["external_url"]):
             abort(404)
@@ -458,7 +497,7 @@ def message_board():
 @app.get("/admin")
 @admin_required
 def admin():
-    return render_template("admin/index.html", poll_results=store.poll_results(), articles=store.list_articles(), users=store.list_users() if session.get("role") == "superadmin" else [], comments=store.list_comments(), messages=store.list_messages())
+    return render_template("admin/index.html", polls=[dict(poll, slug=slug, total=store.poll_results(poll["id"])["total"]) for slug, poll in POLLS.items()], users=store.list_users() if session.get("role") == "superadmin" else [], comments=store.list_comments(), messages=store.list_messages())
 
 
 @app.post("/admin/comments/<int:comment_id>/delete")

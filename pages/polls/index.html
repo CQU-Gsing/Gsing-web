@@ -3,13 +3,13 @@
 {% block head %}<link rel="stylesheet" href="{{ url_for('page_asset',filename='polls/poll.css',v='20261010') }}">{% endblock %}
 {% block body %}
 <main class="poll-shell"><a class="back" href="{{ url_for('home') }}#stories">← 返回最近动态</a>
-<header class="poll-heading"><p class="eyebrow">VISION / TRAINING</p><h1>{{ title }}</h1><p>选择所有可以参加的时间，帮助我们安排培训。</p><p>无法参加培训的队员，后续会提供培训录屏和 PPT，方便补学。</p><span class="poll-deadline">{{ '已截止' if closed else '投票进行中' }} · 2026 年 10 月 10 日 23:59 截止（北京时间）</span></header>
+<header class="poll-heading"><p class="eyebrow">GSING / TRAINING</p><h1>{{ title }}</h1><p>选择所有可以参加的时间，帮助我们安排培训。</p><p>无法参加培训的队员，后续会提供培训录屏和 PPT，方便补学。</p><span class="poll-deadline">{{ '已截止' if closed else '投票进行中' }} · 2026 年 10 月 10 日 23:59 截止（北京时间）</span></header>
 <section class="poll-card">
 {% if vote %}<p class="poll-saved">已保存你的投票{% if not closed %}，修改后再次提交即可更新{% endif %}。</p>{% endif %}
-{% if closed %}<p>投票已截止，感谢参与。</p>{% elif not current_user %}<p>请先登录账号，再填写队名投票。</p><a class="primary-action" href="{{ url_for('login',next=request.path) }}">登录并投票 ↗</a>{% endif %}
+{% if closed %}<p>投票已截止，感谢参与。</p>{% elif not current_user %}<p>请先登录账号，{% if poll.requires_team %}再填写队名{% endif %}即可投票。</p><a class="primary-action" href="{{ url_for('login',next=request.path) }}">登录并投票 ↗</a>{% endif %}
 <form method="post"><input type="hidden" name="csrf_token" value="{{ session.poll_csrf }}">
-<fieldset {% if closed or not current_user %}disabled{% endif %}><label class="poll-team">队名<input name="team_name" maxlength="60" value="{{ team_name }}" placeholder="填写你所在的队伍名称" required></label><legend>可参加的培训时间（可多选）</legend>
+<fieldset {% if closed or not current_user %}disabled{% endif %}>{% if poll.requires_team %}<label class="poll-team">队名<input name="team_name" maxlength="60" value="{{ team_name }}" placeholder="填写你所在的队伍名称" required></label>{% endif %}<legend>可参加的培训时间（可多选）</legend>
 <div class="poll-options">{% for key,label in options %}<label class="poll-option"><input type="checkbox" name="choices" value="{{ key }}" {% if key in selected %}checked{% endif %}><span>{{ label }}</span>{% if key in selected %}<small>已选择</small>{% endif %}</label>{% endfor %}</div>
 {% if current_user and not closed %}<button class="submit">{{ '更新投票' if vote else '提交投票' }}</button>{% endif %}</fieldset>
-<p class="poll-note">每个账号一份投票，截止前可修改。队名和个人投票记录仅供管理员安排培训。</p></form>
+<p class="poll-note">每个账号一份投票，截止前可修改。个人投票记录仅供管理员安排培训。</p></form>
 </section></main>{% endblock %}

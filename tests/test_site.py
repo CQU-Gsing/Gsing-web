@@ -48,7 +48,7 @@ class SiteTests(unittest.TestCase):
                 token = session["poll_csrf"]
             url = "/polls/vision-training/"
             self.assertEqual(client.post(url, data={"team_name": "一队", "choices": "1011-am"}).status_code, 400)
-            self.assertEqual(client.post(url, data={"csrf_token": token,"team_name": "", "choices": "1011-am"}).status_code, 400)
+            self.assertEqual(client.post(url, data={"csrf_token": token,"choices": []}).status_code, 400)
             self.assertEqual(client.post(url, data={"csrf_token": token,"team_name": "一队", "choices": "bad"}).status_code, 400)
             self.assertEqual(client.post(url, data={"csrf_token": token,"team_name": "一队", "choices": ["1011-am","1012-pm","1011-am"]}).status_code, 302)
             self.assertEqual(len(self.store.get_poll_vote(POLL_ID,user["id"])["choices"]),2)
@@ -57,16 +57,43 @@ class SiteTests(unittest.TestCase):
             self.assertEqual(vote["team_name"],"二队")
             self.assertEqual(vote["choices"],["1017-evening"])
             self.assertEqual(self.store.poll_results()["total"],1)
+            self.assertEqual(client.post("/polls/vision-freshman-training/",data={"csrf_token":token,"choices":"1011-pm"}).status_code,302)
+            self.assertEqual(self.store.get_poll_vote("freshman-training-202610",user["id"])["choices"],["1011-pm"])
+            self.assertEqual(self.store.get_poll_vote(POLL_ID,user["id"])["choices"],["1017-evening"])
+            self.assertIn('name="team_name"',client.get(url).get_data(as_text=True))
+            self.assertNotIn('name="team_name"',client.get("/polls/vision-freshman-training/").get_data(as_text=True))
+
             self.assertEqual(client.get("/admin/polls/vision-training/").status_code,403)
+            self.assertEqual(client.get("/admin/polls/vision-training/export.csv").status_code,403)
             with patch("src.polls.china_now",return_value=POLL_CLOSE), patch("main.china_now",return_value=POLL_CLOSE):
                 self.assertEqual(client.post(url,data={"csrf_token":token,"team_name":"三队","choices":"1011-am"}).status_code,400)
                 self.assertIn("已截止",client.get(url).get_data(as_text=True))
-                self.assertEqual(self.store.get_poll_vote(POLL_ID,user["id"])["team_name"],"二队")
+                self.assertEqual(self.store.get_poll_vote(POLL_ID,user["id"])["choices"],["1017-evening"])
             with client.session_transaction() as session:
                 session["role"]="admin"
-            self.assertIn("二队",client.get("/admin/polls/vision-training/").get_data(as_text=True))
+            self.assertIn("poll-tester",client.get("/admin/polls/vision-training/").get_data(as_text=True))
+            import csv, io
+            response=client.get("/admin/polls/vision-training/export.csv")
+            self.assertEqual(response.status_code,200)
+            self.assertTrue(response.data.startswith(b"\xef\xbb\xbf"))
+            records=list(csv.reader(io.StringIO(response.data.decode("utf-8-sig"))))
+            self.assertEqual(records[1][0],"poll-tester")
+            self.assertEqual(len(records[0]),12)
+            self.assertEqual(records[1][-1],"是")
+            self.assertEqual(response.headers["Cache-Control"],"no-store")
+            self.assertNotIn("最近动态管理",client.get("/admin").get_data(as_text=True))
+            self.assertIn("Gsing视觉组新生考核培训",client.get("/admin/polls/vision-freshman-training/").get_data(as_text=True))
+            freshman_export=client.get("/admin/polls/vision-freshman-training/export.csv")
+            self.assertEqual(freshman_export.status_code,200)
+            freshman_rows=list(csv.reader(io.StringIO(freshman_export.data.decode("utf-8-sig"))))
+            self.assertEqual(freshman_rows[1][3],"是")
+            self.assertEqual(client.get("/articles/freshman-training-202610").location,"/polls/vision-freshman-training/")
+            self.assertEqual(client.get("/polls/freshman-training/").location,"/polls/vision-freshman-training/")
+            self.assertEqual(client.get("/admin/polls/freshman-training/export.csv").location,"/admin/polls/vision-freshman-training/export.csv")
+
+
             home=client.get("/").get_data(as_text=True)
-            self.assertIn("视觉组培训时间投票",home)
+            self.assertIn("Gsing视觉组实训培训时间",home)
             self.assertNotIn("下一个赛场",home)
             self.assertEqual(client.get("/articles/"+POLL_ID).location,"/polls/vision-training/")
             for asset in self.main.PAGE_ASSETS:
@@ -75,6 +102,25 @@ class SiteTests(unittest.TestCase):
             for private in ["base.html","admin/index.html","../main.py"]:
                 self.assertIn(client.get("/assets/"+private).status_code,[403,404])
         self.store.delete_user(user["id"])
+
+    def test_training_resources(self):
+        with self.app.test_client() as client:
+            self.assertIn("2026 视觉组培训 PPT 课件",client.get("/").get_data(as_text=True))
+            response=client.get("/articles/vision-training-resources-20261011")
+            self.assertEqual(response.status_code,200)
+            html=response.get_data(as_text=True)
+            self.assertNotIn("<video",html)
+            self.assertNotIn(".mp4",html)
+            for name in ["GSing视觉组2026新生培训.pptx", "CRTC视觉组培训_YOLO部署与一键抓取_v1.1.pptx"]:
+                url="/media/pages/2026视觉组培训/"+name
+                self.assertIn(name,html)
+                with client.head(url) as file_response:
+                    self.assertEqual(file_response.status_code,200)
+                    self.assertGreater(int(file_response.headers["Content-Length"]),0)
+                if name.endswith(".mp4"):
+                    with client.get(url,headers={"Range":"bytes=0-31"}) as partial:
+                        self.assertEqual(partial.status_code,206)
+                        self.assertEqual(len(partial.data),32)
 
     def test_public_roster_fields(self):
         data = json.loads((ROOT / "data/team.json").read_text(encoding="utf-8"))
