@@ -39,6 +39,21 @@ class ArticleStore:
     def _init_schema(self):
         with self.connect() as db:
             db.executescript("""
+                CREATE TABLE IF NOT EXISTS srtp_applications (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project TEXT NOT NULL DEFAULT 'srtp-2026-yolo',
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    college TEXT NOT NULL,
+                    major TEXT NOT NULL,
+                    grade TEXT NOT NULL,
+                    directions TEXT NOT NULL,
+                    skills TEXT NOT NULL,
+                    motivation TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(project,user_id)
+                );
                 CREATE TABLE IF NOT EXISTS poll_votes (
                     poll_id TEXT NOT NULL,
                     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -125,6 +140,18 @@ class ArticleStore:
                 );
             """)
             count = db.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
+            srtp_columns = {row[1] for row in db.execute("PRAGMA table_info(srtp_applications)")}
+            for column in ("campus", "join_vision", "introduction", "student_id"):
+                if column not in srtp_columns:
+                    db.execute(f"ALTER TABLE srtp_applications ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+            if not db.execute("SELECT 1 FROM content_migrations WHERE name='srtp-introduction-fields'").fetchone():
+                db.execute("UPDATE srtp_applications SET introduction=TRIM(skills || CASE WHEN skills<>'' AND motivation<>'' THEN char(10) || char(10) ELSE '' END || motivation) WHERE introduction=''")
+                db.execute("INSERT INTO content_migrations(name) VALUES('srtp-introduction-fields')")
+            message_columns = {row[1] for row in db.execute("PRAGMA table_info(messages)").fetchall()}
+            if "ip" not in message_columns:
+                db.execute("ALTER TABLE messages ADD COLUMN ip TEXT NOT NULL DEFAULT ''")
+            if "ip_source" not in message_columns:
+                db.execute("ALTER TABLE messages ADD COLUMN ip_source TEXT NOT NULL DEFAULT ''")
             visit_columns = {row[1] for row in db.execute("PRAGMA table_info(visits)").fetchall()}
             if "location" not in visit_columns:
                 db.execute("ALTER TABLE visits ADD COLUMN location TEXT NOT NULL DEFAULT ''")
@@ -197,6 +224,19 @@ class ArticleStore:
                     db.execute("UPDATE articles SET title=?,summary=?,content=? WHERE slug=?", (
                         "2026 视觉组培训 PPT 课件", "新生考核培训与 CRTC 实训培训的两份 PPT 课件已上线，可下载补学与复习。", content, "vision-training-resources-20261011"))
                 db.execute("INSERT INTO content_migrations(name) VALUES('vision-training-resources-ppt-only')")
+            if not db.execute("SELECT 1 FROM content_migrations WHERE name='srtp-2026-yolo-recruitment'").fetchone():
+                db.execute("""INSERT OR IGNORE INTO articles(slug,title,category,summary,content,published,created_at)
+                    VALUES(?,?,?,?,?,1,?)""", (
+                    "srtp-2026-yolo-recruitment", "2026 级 SRTP 项目组报名 · YOLO 物资箱识别与定位", "科研训练",
+                    "面向 2026 级本科生，参与数据标注、YOLO Pose、相机标定与误差评测。了解项目并提交报名意向，学校正式申报须在管理平台完成。",
+                    "", "2026-10-13 00:00:00"))
+                db.execute("INSERT INTO content_migrations(name) VALUES('srtp-2026-yolo-recruitment')")
+            if not db.execute("SELECT 1 FROM content_migrations WHERE name='srtp-vision-news-label'").fetchone():
+                db.execute("UPDATE articles SET title=?,category=?,summary=? WHERE slug=?", (
+                    "2026 级视觉组 SRTP 项目组报名 · YOLO 物资箱识别与定位", "视觉组科研训练",
+                    "GSing 战队视觉组 SRTP 项目，面向 2026 级本科生，参与数据标注、YOLO Pose、相机标定与误差评测。本站报名截止：10 月 16 日 22:00（北京时间）；学校正式立项须在管理平台完成。",
+                    "srtp-2026-yolo-recruitment"))
+                db.execute("INSERT INTO content_migrations(name) VALUES('srtp-vision-news-label')")
             page_columns = {row[1] for row in db.execute("PRAGMA table_info(page_settings)").fetchall()}
             if "content" not in page_columns:
                 db.execute("ALTER TABLE page_settings ADD COLUMN content TEXT NOT NULL DEFAULT ''")
@@ -232,6 +272,8 @@ class ArticleStore:
         return None
 
     def create_user(self, username: str, email: str, password: str):
+        username = username.strip()
+        email = email.strip().lower()
         try:
             with self.connect() as db:
                 cursor = db.execute("INSERT INTO users(username,email,password_hash,role) VALUES(?,?,?, 'user')", (username, email, generate_password_hash(password)))
@@ -248,6 +290,10 @@ class ArticleStore:
     def list_users(self):
         with self.connect() as db:
             return [dict(row) for row in db.execute("SELECT id,username,email,role,created_at,last_login_at FROM users ORDER BY CASE role WHEN 'superadmin' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, id").fetchall()]
+
+    def username_exists(self, username: str):
+        with self.connect() as db:
+            return db.execute("SELECT 1 FROM users WHERE username=? COLLATE NOCASE", (username.strip(),)).fetchone() is not None
 
     def email_exists(self, email: str):
         with self.connect() as db:
@@ -349,9 +395,9 @@ class ArticleStore:
         with self.connect() as db:
             return [community_record(row) for row in db.execute("SELECT * FROM messages ORDER BY created_at DESC,id DESC").fetchall()]
 
-    def add_message(self, user_id, username, content):
+    def add_message(self, user_id, username, content, ip=""):
         with self.connect() as db:
-            db.execute("INSERT INTO messages(user_id,username,content) VALUES(?,?,?)", (user_id, username, content))
+            db.execute("INSERT INTO messages(user_id,username,content,ip,ip_source) VALUES(?,?,?,?,?)", (user_id, username, content, ip, "request" if ip else ""))
 
     def delete_message(self, message_id):
         with self.connect() as db:
@@ -419,3 +465,90 @@ class ArticleStore:
         votes = [dict(row, choices=json.loads(row["choices"])) for row in rows]
         counts = [{"label": label, "count": sum(key in vote["choices"] for vote in votes)} for key, label in POLL_OPTIONS]
         return {"votes": votes, "counts": counts, "total": len(votes)}
+
+    # Explicit columns keep credentials and verification codes out of the viewer.
+    DATABASE_TABLES = {
+        "srtp_applications": ("SRTP 报名", ["id", "project", "user_id", "name", "college", "major", "grade", "student_id", "campus", "join_vision", "directions", "introduction", "created_at", "updated_at"]),
+        "users": ("用户账户", ["id", "username", "email", "role", "created_at", "last_login_at"]),
+        "articles": ("战队动态", ["id", "slug", "title", "category", "summary", "content", "published", "created_at", "updated_at", "external_url", "direct_link"]),
+        "poll_votes": ("培训投票", ["poll_id", "user_id", "team_name", "choices", "updated_at"]),
+        "comments": ("文章评论", ["id", "article_id", "user_id", "username", "content", "created_at"]),
+        "messages": ("留言板", ["id", "user_id", "username", "content", "ip", "ip_source", "created_at"]),
+        "visits": ("访问记录", ["id", "visited_at", "ip", "location", "username", "method", "path", "status", "elapsed_ms", "user_agent"]),
+        "page_settings": ("页面设置", ["page_key", "external_url", "external_label", "content"]),
+        "site_stats": ("站点统计", ["name", "value"]),
+        "content_migrations": ("内容迁移", ["name"]),
+    }
+
+    def browse_database(self, table, page=1):
+        if table not in self.DATABASE_TABLES:
+            raise ValueError("Unsupported table")
+        label, columns = self.DATABASE_TABLES[table]
+        size = 50
+        with self.connect() as db:
+            total = db.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+            pages = max(1, (total + size - 1) // size)
+            page = min(max(1, page), pages)
+            fields = ", ".join('"' + column + '"' for column in columns)
+            order = '"id" DESC' if "id" in columns else ('"updated_at" DESC, "poll_id", "user_id"' if table == "poll_votes" else '"' + columns[0] + '"')
+            rows = db.execute(f'SELECT {fields} FROM "{table}" ORDER BY {order} LIMIT ? OFFSET ?', (size, (page - 1) * size)).fetchall()
+        return {"table": table, "label": label, "columns": columns, "rows": [dict(row) for row in rows], "total": total, "page": page, "pages": pages}
+
+    def backfill_message_ips(self):
+        """Infer old IPs only from an unambiguous matching submission within 2 seconds."""
+        import ipaddress
+        filled = 0
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            messages = db.execute("SELECT id,username,created_at FROM messages WHERE ip='' ORDER BY id").fetchall()
+            for message in messages:
+                candidates = db.execute("""SELECT ip FROM visits WHERE username=? AND method='POST'
+                    AND path IN ('/message-board','/message-board?') AND status=302
+                    AND visited_at >= ? AND visited_at <= datetime(?, '+2 seconds')""",
+                    (message["username"],message["created_at"],message["created_at"])).fetchall()
+                nearby = db.execute("""SELECT COUNT(*) FROM messages WHERE username=?
+                    AND created_at BETWEEN datetime(?, '-2 seconds') AND datetime(?, '+2 seconds')""",
+                    (message["username"],message["created_at"],message["created_at"])).fetchone()[0]
+                if len(candidates) != 1 or nearby != 1:
+                    continue
+                try:
+                    ip = str(ipaddress.ip_address(candidates[0]["ip"]))
+                except ValueError:
+                    continue
+                db.execute("UPDATE messages SET ip=?,ip_source='access-record' WHERE id=? AND ip=''", (ip,message["id"]))
+                filled += 1
+            remaining = db.execute("SELECT COUNT(*) FROM messages WHERE ip=''").fetchone()[0]
+        return {"filled": filled, "remaining": remaining}
+
+    def get_srtp_application(self, user_id):
+        with self.connect() as db:
+            row=db.execute("SELECT * FROM srtp_applications WHERE project='srtp-2026-yolo' AND user_id=?",(user_id,)).fetchone()
+        if not row:
+            return None
+        result=dict(row)
+        result["directions"]=json.loads(result["directions"])
+        return result
+
+    def save_srtp_application(self, user_id, data, directions):
+        from src.srtp import CLOSE_AT, now, valid_application
+        if not valid_application(data,directions):
+            return "invalid"
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            current=now()
+            if current >= CLOSE_AT:
+                return "closed"
+            if not db.execute("SELECT 1 FROM users WHERE id=?",(user_id,)).fetchone():
+                return "user-missing"
+            db.execute("""INSERT INTO srtp_applications(user_id,name,college,major,grade,directions,skills,motivation,updated_at,campus,join_vision,introduction,student_id)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(project,user_id) DO UPDATE SET
+                name=excluded.name,college=excluded.college,major=excluded.major,grade=excluded.grade,
+                directions=excluded.directions,student_id=excluded.student_id,campus=excluded.campus,join_vision=excluded.join_vision,introduction=excluded.introduction,updated_at=excluded.updated_at""",
+                (user_id,data["name"],data["college"],data["major"],data["grade"],json.dumps(list(dict.fromkeys(data["directions"])),ensure_ascii=False),"","",current.isoformat(timespec="seconds"),data["campus"],data["join_vision"],data["introduction"],data["student_id"]))
+        return "saved"
+
+    def list_srtp_applications(self):
+        with self.connect() as db:
+            rows=db.execute("""SELECT a.*,u.username,u.email FROM srtp_applications a JOIN users u ON u.id=a.user_id
+                WHERE project='srtp-2026-yolo' ORDER BY a.updated_at DESC,a.id DESC""").fetchall()
+        return [dict(row,directions=json.loads(row["directions"])) for row in rows]

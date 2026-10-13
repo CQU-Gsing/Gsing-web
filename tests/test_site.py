@@ -122,6 +122,169 @@ class SiteTests(unittest.TestCase):
                         self.assertEqual(partial.status_code,206)
                         self.assertEqual(len(partial.data),32)
 
+    def test_database_viewer_access_and_data(self):
+        hyper = self.store.create_user("hyper", "hyper@example.test", "test-db-password")
+        other = self.store.create_user("db-other", "db-other@example.test", "test-password")
+        self.store.set_user_role(hyper["id"], "admin")
+        self.store.set_user_role(other["id"], "admin")
+        with self.app.test_client() as client:
+            self.assertEqual(client.get("/admin/database").status_code,302)
+            with client.session_transaction() as session:
+                session.update(user_id=other["id"],username="db-other",role="admin")
+            self.assertEqual(client.get("/admin/database").status_code,403)
+            with client.session_transaction() as session:
+                session.update(user_id=hyper["id"],username="hyper",role="admin")
+            self.assertIn("数据库数据",client.get("/admin").get_data(as_text=True))
+            for table in self.store.DATABASE_TABLES:
+                response=client.get("/admin/database",query_string={"table":table,"page":1})
+                self.assertEqual(response.status_code,200,table)
+                self.assertEqual(response.headers["Cache-Control"],"no-store")
+                self.assertNotIn("password_hash",response.get_data(as_text=True))
+            html=client.get("/admin/database").get_data(as_text=True)
+            self.assertIn("hyper@example.test",html)
+            for table in ["email_codes","admins",'users; DROP TABLE users;--']:
+                self.assertEqual(client.get("/admin/database",query_string={"table":table}).status_code,400)
+            self.assertEqual(client.get("/admin/database?page=invalid").status_code,400)
+            self.assertLessEqual(len(self.store.browse_database("visits",999999)["rows"]),50)
+            self.store.set_user_role(hyper["id"],"user")
+            self.assertEqual(client.get("/admin/database").status_code,403)
+        self.store.delete_user(hyper["id"])
+        self.store.delete_user(other["id"])
+
+    def test_message_ip_capture_and_backfill(self):
+        user=self.store.create_user("ip-test", "ip-test@example.test", "test-password")
+        with self.app.test_client() as client:
+            with client.session_transaction() as session:
+                session.update(user_id=user["id"],username="ip-test",role="user")
+            self.assertEqual(client.post("/message-board",data={"content":"ip capture check"},headers={"CF-Connecting-IP":"203.0.113.42"}).status_code,302)
+            message=next(row for row in self.store.list_messages() if row["content"]=="ip capture check")
+            self.assertEqual(message["ip"],"203.0.113.42")
+            self.assertEqual(message["ip_source"],"request")
+            self.assertNotIn("203.0.113.42",client.get("/message-board").get_data(as_text=True))
+        with self.store.connect() as db:
+            for username in ["backfill-unique","backfill-ambiguous","backfill-missing"]:
+                db.execute("INSERT INTO messages(username,content,created_at) VALUES(?,?,'2026-10-01 12:00:00')",(username,"old ip check"))
+            for username,ip in [("backfill-unique","198.51.100.7"),("backfill-ambiguous","198.51.100.8"),("backfill-ambiguous","198.51.100.9")]:
+                db.execute("INSERT INTO visits(visited_at,ip,username,method,path,status,elapsed_ms) VALUES('2026-10-01 12:00:01',?,?,'POST','/message-board',302,1)",(ip,username))
+        self.store.backfill_message_ips()
+        records={row["username"]:row for row in self.store.list_messages() if row["content"]=="old ip check"}
+        self.assertEqual(records["backfill-unique"]["ip"],"198.51.100.7")
+        self.assertEqual(records["backfill-unique"]["ip_source"],"access-record")
+        self.assertEqual(records["backfill-ambiguous"]["ip"],"")
+        self.assertEqual(records["backfill-missing"]["ip"],"")
+        self.assertEqual(self.store.backfill_message_ips()["filled"],0)
+        with self.store.connect() as db:
+            db.execute("DELETE FROM messages WHERE content IN ('old ip check','ip capture check')")
+        self.store.delete_user(user["id"])
+
+    def test_visit_analytics(self):
+        from datetime import datetime, timezone
+        from src.visit_analytics import build_analytics
+        user=self.store.create_user("hyper", "visits-hyper@example.test", "test-password")
+        self.store.set_user_role(user["id"],"admin")
+        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        with self.store.connect() as db:
+            for status in [200,404]:
+                db.execute("INSERT INTO visits(visited_at,ip,location,username,method,path,status,elapsed_ms) VALUES(?,?,?,?,'GET',?,?,2)",
+                           (timestamp,"203.0.113.123","visit-fixture-region","visit-fixture-user","/visit-fixture",status))
+        with patch("src.visit_analytics.query_ip_location",return_value={"country":"中国","region":"重庆"}), patch("src.visit_analytics.is_internal_ip",return_value=False):
+            stats=build_analytics(self.store,"visit-fixture-user")
+            self.assertEqual(stats["totals"]["requests"],2)
+            self.assertEqual(stats["totals"]["ips"],1)
+            self.assertEqual(stats["totals"]["errors"],1)
+            self.assertEqual(stats["totals"]["domestic"],2)
+            self.assertEqual(stats["trend"][-1]["requests"],2)
+            with self.app.test_client() as client:
+                self.assertEqual(client.get("/admin/visits").status_code,302)
+                with client.session_transaction() as session:
+                    session.update(user_id=user["id"],username="hyper",role="admin")
+                response=client.get("/admin/visits?q=visit-fixture-user&ip=203.0.113.123")
+                self.assertEqual(response.status_code,200)
+                self.assertIn("最近 30 天",response.get_data(as_text=True))
+                self.assertIn("/visit-fixture",response.get_data(as_text=True))
+                self.assertEqual(response.headers["Cache-Control"],"no-store")
+                self.assertEqual(client.get("/admin/visits?ip=bad").status_code,400)
+                self.assertEqual(client.get("/admin/visits?page=bad").status_code,400)
+                self.assertNotIn("页面与媒体",client.get("/admin").get_data(as_text=True))
+                self.assertEqual(client.get("/admin/pages/gsing").status_code,404)
+                self.assertEqual(client.post("/admin/media/upload").status_code,404)
+                self.store.set_user_role(user["id"],"user")
+                self.assertEqual(client.get("/admin/visits").status_code,403)
+        with self.store.connect() as db:
+            db.execute("DELETE FROM visits WHERE path='/visit-fixture'")
+        self.store.delete_user(user["id"])
+
+    def test_duplicate_usernames_rejected(self):
+        user=self.store.create_user("Unique名字", "unique-name@example.test", "test-password")
+        self.assertIsNotNone(user)
+        for index,username in enumerate(["Unique名字","unique名字"," UNIQUE名字 "]):
+            self.assertTrue(self.store.username_exists(username))
+            self.assertIsNone(self.store.create_user(username,f"duplicate-{index}@example.test","test-password"))
+        with self.app.test_client() as client, patch.object(self.store,"verify_email_code") as verify:
+            response=client.post("/register",data={"username":" unique名字 ","email":"new@example.test","password":"test-password","confirm_password":"test-password","code":"123456"})
+            self.assertIn("用户名已被使用",response.get_data(as_text=True))
+            verify.assert_not_called()
+            with client.session_transaction() as session:
+                self.assertNotIn("user_id",session)
+        self.store.delete_user(user["id"])
+
+    def test_srtp_registration(self):
+        from datetime import datetime
+        from src.srtp import CLOSE_AT
+        self.assertEqual(CLOSE_AT.isoformat(),"2026-10-16T22:00:00+08:00")
+        from src.storage import CHINA_TIME
+        user=self.store.create_user("srtp-test", "srtp-test@example.test", "test-password")
+        before=datetime(2026,10,13,12,0,tzinfo=CHINA_TIME)
+        valid={"name":"测试学生","student_id":"202600012345","college":"测试学院","major":"测试专业","grade":"2026级","directions":["数据采集与标注"],"campus":"A","join_vision":"是","introduction":"Python 基础，每周五小时参与研究"}
+        with self.app.test_client() as client,patch("src.srtp.now",return_value=before):
+            html=client.get("/srtp/2026/vision/").get_data(as_text=True)
+            old=client.get("/srtp/2026/")
+            self.assertEqual(old.status_code,308)
+            self.assertEqual(old.location,"/srtp/2026/vision/")
+            self.assertEqual(client.post("/srtp/2026/",data=valid).status_code,308)
+            self.assertIn("登录并报名",html)
+            self.assertIn("10 月 16 日 22:00",html)
+            self.assertIn("相机标定",html)
+            self.assertEqual(client.post("/srtp/2026/vision/",data=valid).status_code,302)
+            with client.session_transaction() as session:
+                session.update(user_id=user["id"],username="srtp-test",role="user")
+                token=session["srtp_csrf"]
+            self.assertEqual(client.post("/srtp/2026/vision/",data=valid).status_code,400)
+            valid["csrf_token"]=token
+            self.assertEqual(client.post("/srtp/2026/vision/",data={**valid,"student_id":""}).status_code,400)
+            self.assertEqual(client.post("/srtp/2026/vision/",data={**valid,"student_id":"abc"}).status_code,400)
+            self.assertEqual(client.post("/srtp/2026/vision/",data={**valid,"grade":"2025级"}).status_code,400)
+            self.assertEqual(client.post("/srtp/2026/vision/",data={**valid,"campus":"E"}).status_code,400)
+            self.assertEqual(client.post("/srtp/2026/vision/",data={**valid,"join_vision":""}).status_code,400)
+            self.assertEqual(client.post("/srtp/2026/vision/",data={**valid,"directions":["invalid"]}).status_code,400)
+            self.assertEqual(client.post("/srtp/2026/vision/",data=valid).status_code,302)
+            self.assertEqual(self.store.get_srtp_application(user["id"])["name"],"测试学生")
+            self.assertEqual(self.store.get_srtp_application(user["id"])["student_id"],"202600012345")
+            self.assertEqual(client.post("/srtp/2026/vision/",data={**valid,"introduction":"Python 与 OpenCV"}).status_code,302)
+            self.assertEqual(len(self.store.list_srtp_applications()),1)
+            self.assertEqual(self.store.get_srtp_application(user["id"])["introduction"],"Python 与 OpenCV")
+            with patch("src.srtp.now",return_value=CLOSE_AT):
+                self.assertEqual(client.post("/srtp/2026/vision/",data=valid).status_code,400)
+                self.assertIn("已截止",client.get("/srtp/2026/vision/").get_data(as_text=True))
+            for route in ["/admin/srtp/vision","/admin/srtp/vision/export.csv"]:
+                self.assertEqual(client.get(route).status_code,403)
+            with client.session_transaction() as session:
+                session["role"]="admin"
+            self.assertIn("srtp-test@example.test",client.get("/admin/srtp/vision").get_data(as_text=True))
+            self.assertEqual(client.get("/admin/srtp").location,"/admin/srtp/vision")
+            self.assertEqual(client.get("/admin/srtp/export.csv").location,"/admin/srtp/vision/export.csv")
+            export=client.get("/admin/srtp/vision/export.csv")
+            self.assertEqual(export.status_code,200)
+            self.assertTrue(export.data.startswith(b"\xef\xbb\xbf"))
+            self.assertIn("Python 与 OpenCV",export.data.decode("utf-8-sig"))
+            self.assertIn("202600012345",export.data.decode("utf-8-sig"))
+            client.post("/logout")
+            self.assertNotIn("测试学生",client.get("/srtp/2026/vision/").get_data(as_text=True))
+            self.assertNotIn("202600012345",client.get("/srtp/2026/vision/").get_data(as_text=True))
+            self.assertIn("2026 级视觉组 SRTP 项目组报名",client.get("/").get_data(as_text=True))
+            self.assertEqual(client.get("/articles/srtp-2026-yolo-recruitment").location,"/srtp/2026/vision/")
+        self.store.delete_user(user["id"])
+
     def test_public_roster_fields(self):
         data = json.loads((ROOT / "data/team.json").read_text(encoding="utf-8"))
         members = [member for season in data["seasons"] for member in season["members"]]
@@ -155,7 +318,7 @@ class SiteTests(unittest.TestCase):
             with client.session_transaction() as session:
                 session.update(user_id=1, username="test", role="superadmin")
             article = self.store.get_article("2027-recruitment")
-            for route in ["/admin", "/admin/articles/new", "/admin/articles/" + str(article["id"]) + "/edit", "/admin/pages/gsing"]:
+            for route in ["/admin", "/admin/articles/new", "/admin/articles/" + str(article["id"]) + "/edit"]:
                 self.assertEqual(client.get(route).status_code, 200, route)
 
     def test_private_sources_not_served(self):

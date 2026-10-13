@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import ipaddress
 import csv
 import io
 import json
@@ -8,7 +9,6 @@ import re
 import logging
 import sys
 import time
-import uuid
 import secrets
 from datetime import datetime
 from functools import wraps
@@ -29,6 +29,7 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 BASE_DIR = Path(__file__).resolve().parent
+SRTP_CONTENT = json.loads((BASE_DIR / "data" / "srtp2026.json").read_text(encoding="utf-8"))
 TEAM_CONTENT = json.loads((BASE_DIR / "data" / "team.json").read_text(encoding="utf-8"))
 AWARD_GALLERY = [
     {"label": "一队 · 障碍赛一等奖", "preview": "/media/pages/2026RC/一队_障碍赛_一等奖.webp"},
@@ -87,8 +88,6 @@ def masked_email(email: str) -> str:
     return f"{visible}***@{domain}"
 
 
-ALLOWED_MEDIA_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".mp4", ".webm", ".mov"}
-VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov"}
 
 
 def valid_external_url(value: str) -> bool:
@@ -101,12 +100,6 @@ def valid_direct_url(value: str) -> bool:
         return parsed.scheme.lower() in {"http", "https"} and bool(parsed.hostname) and not any(char.isspace() or ord(char) < 32 for char in value) and "\\" not in value
     except ValueError:
         return False
-
-
-def uploaded_media():
-    upload_dir = BASE_DIR / "media" / "uploads"
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    return [{"name": path.name, "url": f"/media/uploads/{path.name}", "kind": "video" if path.suffix.lower() in VIDEO_EXTENSIONS else "image", "size": path.stat().st_size} for path in sorted(upload_dir.iterdir(), key=lambda item: item.stat().st_mtime, reverse=True) if path.is_file() and path.suffix.lower() in ALLOWED_MEDIA_EXTENSIONS]
 
 
 def article_content_blocks(content: str):
@@ -216,9 +209,50 @@ def superadmin_required(view):
     return wrapped
 
 
+def can_view_database():
+    user = store.get_user(session["user_id"]) if session.get("user_id") else None
+    return bool(user and (user["role"] == "superadmin" or (user["role"] == "admin" and user["username"].casefold() == "hyper")))
+
+
+@app.get("/admin/database")
+@login_required
+def database_viewer():
+    if not can_view_database():
+        abort(403)
+    table = request.args.get("table", "users")
+    try:
+        page = int(request.args.get("page", "1"))
+        data = store.browse_database(table, page)
+    except ValueError:
+        abort(400)
+    response = app.make_response(render_template("admin/database.html", data=data, tables=store.DATABASE_TABLES))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.get("/admin/visits")
+@login_required
+def visit_analytics():
+    if not can_view_database():
+        abort(403)
+    from src.visit_analytics import build_analytics, visit_detail
+    query = request.args.get("q", "").strip()[:100]
+    ip = request.args.get("ip", "").strip()
+    try:
+        page = int(request.args.get("page", "1"))
+        if ip:
+            ipaddress.ip_address(ip)
+        detail = visit_detail(store, ip, page) if ip else None
+    except ValueError:
+        abort(400)
+    response = app.make_response(render_template("admin/visits.html", stats=build_analytics(store,query), query=query, detail=detail))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.context_processor
 def inject_globals():
-    return {"team_content": TEAM_CONTENT, "current_user": session.get("username"), "is_admin": session.get("role") in {"admin", "superadmin"}, "is_superadmin": session.get("role") == "superadmin", "admin_name": session.get("username"), "visit_count": store.get_visit_count()}
+    return {"can_view_database": can_view_database(), "team_content": TEAM_CONTENT, "current_user": session.get("username"), "is_admin": session.get("role") in {"admin", "superadmin"}, "is_superadmin": session.get("role") == "superadmin", "admin_name": session.get("username"), "visit_count": store.get_visit_count()}
 
 
 @app.get("/")
@@ -253,8 +287,8 @@ def legacy_devlog():
 PAGE_ASSETS = {
     "shared/base.css", "shared/theme.css", "shared/site-chrome.js",
     "home/home.css", "home/home.js", "team/team.css",
-    "login/auth.css", "login/auth-email.js", "admin/media-editor.js",
-    "admin/admin.css", "polls/poll.css",
+    "login/auth.css", "login/auth-email.js", "admin/visits.css",
+    "admin/admin.css", "polls/poll.css", "srtp/srtp.css",
 }
 
 @app.get("/assets/<path:filename>")
@@ -339,6 +373,76 @@ def export_training_poll(poll_slug):
                              "Cache-Control": "no-store"})
 
 
+@app.route("/srtp/2026/", methods=["GET", "POST"])
+def legacy_srtp_registration():
+    return redirect(url_for("srtp_registration"), code=308)
+
+
+@app.get("/admin/srtp")
+@admin_required
+def legacy_srtp_applications():
+    return redirect(url_for("srtp_applications"), code=308)
+
+
+@app.get("/admin/srtp/export.csv")
+@admin_required
+def legacy_srtp_export():
+    return redirect(url_for("export_srtp_applications"), code=308)
+
+
+@app.route("/srtp/2026/vision/", methods=["GET", "POST"])
+def srtp_registration():
+    from src.srtp import CLOSE_AT, now
+    application=store.get_srtp_application(session["user_id"]) if session.get("user_id") else None
+    data=application or {"grade":"2026级", "directions":[]}
+    session.setdefault("srtp_csrf",secrets.token_urlsafe(32))
+    closed=now() >= CLOSE_AT
+    status=200
+    if request.method == "POST":
+        if not session.get("user_id"):
+            return redirect(url_for("login",next=request.path))
+        if not secrets.compare_digest(request.form.get("csrf_token",""),session["srtp_csrf"]):
+            abort(400)
+        data={key:request.form.get(key,"").strip() for key in ("name","student_id","college","major","grade","campus","join_vision","introduction")}
+        data["directions"]=request.form.getlist("directions")
+        result=store.save_srtp_application(session["user_id"],data,SRTP_CONTENT["directions"])
+        if result == "saved":
+            flash("报名意向已保存，截止前可修改。学校正式立项申请需另在管理平台提交。","success")
+            return redirect(url_for("srtp_registration")+"#signup")
+        if result == "user-missing":
+            session.clear()
+            return redirect(url_for("login",next=request.path))
+        if result == "closed":
+            closed=True
+            flash("本站报名已截止。","error")
+        else:
+            flash("请完整填写报名信息，学号须为数字，年级须为 2026 级，选择校区与加入视觉组意向，并至少选择一个参与方向。","error")
+        status=400
+    response=app.make_response((render_template("srtp/index.html",project=SRTP_CONTENT,data=data,application=application,closed=closed),status))
+    response.headers["Cache-Control"]="no-store"
+    return response
+
+
+@app.get("/admin/srtp/vision")
+@admin_required
+def srtp_applications():
+    response=app.make_response(render_template("admin/srtp.html",applications=store.list_srtp_applications()))
+    response.headers["Cache-Control"]="no-store"
+    return response
+
+
+@app.get("/admin/srtp/vision/export.csv")
+@admin_required
+def export_srtp_applications():
+    output=io.StringIO(newline="")
+    writer=csv.writer(output)
+    writer.writerow(["账号","姓名","学号","学院","专业","年级","报名邮箱","校区","是否意向加入Gsing战队视觉组","参与方向","自我介绍","更新时间（北京时间）"])
+    for item in store.list_srtp_applications():
+        values=[item["username"],item["name"],item["student_id"],item["college"],item["major"],item["grade"],item["email"] or "",item["campus"],item["join_vision"]," / ".join(item["directions"]),item["introduction"],item["updated_at"]]
+        writer.writerow(["'"+str(value) if str(value).lstrip().startswith(("=","+","-","@")) or str(value).startswith(("\t","\r","\n")) else value for value in values])
+    return Response(output.getvalue().encode("utf-8-sig"),content_type="text/csv; charset=utf-8",headers={"Content-Disposition":'attachment; filename="srtp-2026-vision-applications.csv"',"Cache-Control":"no-store"})
+
+
 @app.get("/media/<path:filename>")
 def media_file(filename):
     return send_from_directory(BASE_DIR / "media", filename, mimetype="image/webp" if Path(filename).suffix.lower() == ".webp" else None)
@@ -368,6 +472,8 @@ def register():
         confirm = request.form.get("confirm_password", "")
         if not re.fullmatch(r"[A-Za-z0-9_\u4e00-\u9fff]{2,24}", username):
             flash("用户名需为 2–24 位中文、字母、数字或下划线", "error")
+        elif store.username_exists(username):
+            flash("用户名已被使用，请换一个名字（不区分大小写）", "error")
         elif not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
             flash("请输入有效的邮箱地址", "error")
         elif len(password) < 8:
@@ -382,7 +488,7 @@ def register():
                 sign_in_user(user)
                 flash("注册成功", "success")
                 return redirect(url_for("home"))
-            flash("用户名已存在", "error")
+            flash("用户名或邮箱已被使用，请更换后重试", "error")
     return render_template("login/register.html")
 
 
@@ -451,6 +557,8 @@ def article(slug: str):
     item = store.get_article(slug)
     if not item or (not item["published"] and session.get("role") not in {"admin", "superadmin"}):
         abort(404)
+    if item["slug"] == "srtp-2026-yolo-recruitment":
+        return redirect(url_for("srtp_registration"))
     for slug, poll in POLLS.items():
         if item["slug"] == poll["id"]:
             return redirect(url_for("vision_training_poll", poll_slug=slug))
@@ -488,7 +596,11 @@ def message_board():
         if not 1 <= len(content) <= 1000:
             flash("留言内容需为 1–1000 个字符", "error")
         else:
-            store.add_message(session["user_id"], session["username"], content)
+            try:
+                message_ip = str(ipaddress.ip_address(real_client_ip().strip()))
+            except ValueError:
+                message_ip = ""
+            store.add_message(session["user_id"], session["username"], content, ip=message_ip)
             flash("留言已发布", "success")
             return redirect(url_for("message_board"))
     return render_template("messages/index.html", messages=store.list_messages())
@@ -593,41 +705,6 @@ def edit_article(article_id: int):
         flash("文章已更新", "success")
         return redirect(url_for("admin"))
     return render_template("admin/editor.html", article=item, mode="edit")
-
-
-@app.post("/admin/media/upload")
-@admin_required
-def upload_media():
-    files = request.files.getlist("media")
-    uploaded = 0
-    upload_dir = BASE_DIR / "media" / "uploads"
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    for item in files:
-        suffix = Path(item.filename or "").suffix.lower()
-        if item and suffix in ALLOWED_MEDIA_EXTENSIONS:
-            filename = f"{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:8]}{suffix}"
-            item.save(upload_dir / filename)
-            uploaded += 1
-    flash(f"已上传 {uploaded} 个媒体文件" if uploaded else "未找到支持的图片或视频", "success" if uploaded else "error")
-    target = request.form.get("return_to", "")
-    return redirect(target if target.startswith("/admin/") and not target.startswith("//") else url_for("admin"))
-
-
-@app.route("/admin/pages/gsing", methods=["GET", "POST"])
-@admin_required
-def edit_gsing_page():
-    settings = store.get_page_settings("gsing")
-    if request.method == "POST":
-        external_url = request.form.get("external_url", "").strip()
-        external_label = request.form.get("external_label", "").strip() or "联系我们"
-        content = request.form.get("content", "").strip()
-        if not valid_external_url(external_url):
-            flash("直接跳转需填写完整的 http 或 https 链接；文章内按钮另支持 weixin://", "error")
-        else:
-            store.update_page_settings("gsing", external_url, external_label, content)
-            flash("GSing 专题页链接已更新", "success")
-            return redirect(url_for("edit_gsing_page"))
-    return render_template("admin/gsing_page.html", settings=settings, media_files=uploaded_media())
 
 
 @app.post("/admin/articles/<int:article_id>/toggle")

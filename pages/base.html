@@ -16,7 +16,7 @@
   {% with messages=get_flashed_messages(with_categories=true) %}{% if messages %}<div class="flash-stack">{% for category,message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}</div>{% endif %}{% endwith %}
   {% block site_header %}{% include 'shared/header.html' %}{% endblock %}
   {% block body %}{% endblock %}
-  {% block site_footer %}<footer class="global-footer"><a href="{{ url_for('home') }}">GSING <span>/ ROBOTICS</span></a><p>重庆大学 GSing 机器人战队 · 让机器人走进真实赛场。</p><a href="{{ url_for('message_board') }}">留言板 ↗</a></footer>{% endblock %}
+  {% block site_footer %}<footer class="global-footer"><a href="{{ url_for('home') }}">GSING <span>/ ROBOTICS</span></a><p>重庆大学 GSing 机器人战队 · 让机器人走进真实赛场。<br><small>made by hyper</small></p><a href="{{ url_for('message_board') }}">留言板 ↗</a></footer>{% endblock %}
   <script src="{{ url_for('page_asset',filename='shared/site-chrome.js',v='20260921-navigation') }}" defer></script>
 </body>
 </html>
