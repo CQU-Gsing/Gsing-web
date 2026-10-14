@@ -45,16 +45,16 @@ next-env.d.ts
 /outputs/
 /work/
 /.site-starter/
-/data/*.db
-/data/*.db-shm
-/data/*.db-wal
 /__pycache__/
 /src/__pycache__/
 /logs/*.log
-/data/qq_mail_auth_code.txt
-# Raw rosters and reference material may contain personal information.
-/data/team-source.md
+# Backend data, credentials, and local maintenance files.
+/data/
 
 # Python bytecode in any package or test directory.
 __pycache__/
 *.py[cod]
+
+# Public frontend media must remain eligible for version control.
+!/media/
+!/media/**

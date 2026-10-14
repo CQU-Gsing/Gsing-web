@@ -1,4 +1,4 @@
-{% extends 'base.html' %}
+{% extends '_shared/base.html' %}
 {% block title %}数据库数据｜GSing 管理中心{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('page_asset',filename='admin/admin.css',v='20261012-db') }}">{% endblock %}
 {% block body %}<main class="admin-shell"><header class="admin-top"><a href="{{ url_for('admin') }}">← 返回管理中心</a><span>数据库 · 只读查看</span></header>

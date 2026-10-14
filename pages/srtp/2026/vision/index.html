@@ -1,6 +1,7 @@
-{% extends 'base.html' %}
+{% extends '_shared/base.html' %}
+{% from 'srtp/2026/vision/content.html' import project %}
 {% block title %}2026 级视觉组 SRTP 项目报名｜GSing{% endblock %}
-{% block head %}<link rel="stylesheet" href="{{ url_for('page_asset',filename='srtp/srtp.css',v='20261013') }}">{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('page_asset',filename='srtp/2026/vision/srtp.css',v='20261013') }}">{% endblock %}
 {% block body %}<main class="srtp-shell">
 <header class="srtp-hero"><p class="eyebrow">GSING VISION / SRTP 2026</p><div class="srtp-badges"><span>2026 级本科生</span><span>视觉组</span><span>SRTP 科研训练</span><span>计划立项后 6 个月</span></div><h1>{{ project.title }}</h1><p class="srtp-lead">这是 GSing 战队视觉组的 SRTP 项目，围绕竞赛视觉识别与定位开展科研训练。</p><p class="srtp-lead">{{ project.intro }}</p><div class="srtp-actions"><a class="primary-action" href="#signup">{{ '查看报名' if application else '报名参与项目' }} ↓</a><a href="{{ project.platform }}" target="_blank" rel="noopener noreferrer">学校管理平台 ↗</a></div><p class="srtp-meta">队内负责人：{{ project.leaders }}</p></header>
 <div class="srtp-grid"><section class="srtp-panel"><p class="eyebrow">01 / RESEARCH</p><h2>我们将完成什么</h2><div class="srtp-tasks">{% for task in project.tasks %}<article><span>0{{ loop.index }}</span><div><h3>{{ task.title }}</h3><p>{{ task.text }}</p></div></article>{% endfor %}</div></section>

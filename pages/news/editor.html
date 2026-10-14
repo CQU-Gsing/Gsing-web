@@ -1,4 +1,4 @@
-{% extends 'base.html' %}
+{% extends '_shared/base.html' %}
 {% block title %}{{ '编辑动态' if mode=='edit' else '新增动态' }}｜GSing{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('page_asset',filename='admin/admin.css',v='20261010') }}">{% endblock %}{% block body %}
 <main class="admin-shell"><header class="admin-top"><a href="{{ url_for('admin') }}#recent-stories">← 返回最近动态管理</a><span>{{ admin_name }}</span></header>

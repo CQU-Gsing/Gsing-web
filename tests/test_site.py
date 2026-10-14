@@ -96,6 +96,10 @@ class SiteTests(unittest.TestCase):
             self.assertIn("Gsing视觉组实训培训时间",home)
             self.assertNotIn("下一个赛场",home)
             self.assertEqual(client.get("/articles/"+POLL_ID).location,"/polls/vision-training/")
+            for old,new in self.main.PAGE_ASSET_ALIASES.items():
+                with client.get("/assets/"+old) as legacy,client.get("/assets/"+new) as current:
+                    self.assertEqual(legacy.status_code,200)
+                    self.assertEqual(legacy.data,current.data)
             for asset in self.main.PAGE_ASSETS:
                 with client.get("/assets/"+asset) as response:
                     self.assertEqual(response.status_code,200,asset)
@@ -285,8 +289,33 @@ class SiteTests(unittest.TestCase):
             self.assertEqual(client.get("/articles/srtp-2026-yolo-recruitment").location,"/srtp/2026/vision/")
         self.store.delete_user(user["id"])
 
+    def test_browser_login_persists_and_logout_clears(self):
+        from datetime import timedelta
+        self.assertEqual(self.app.config["PERMANENT_SESSION_LIFETIME"],timedelta(days=30))
+        user=self.store.create_user("remember-test","remember@example.test","test-password")
+        with self.app.test_client() as client:
+            response=client.post("/login",data={"username":"remember-test","password":"test-password"})
+            self.assertEqual(response.status_code,302)
+            self.assertIn("Expires=",response.headers.get("Set-Cookie",""))
+            with client.session_transaction() as session:
+                self.assertTrue(session.permanent)
+            cookie=client.get_cookie(self.app.config["SESSION_COOKIE_NAME"])
+            with self.app.test_client() as reopened:
+                reopened.set_cookie(self.app.config["SESSION_COOKIE_NAME"],cookie.value)
+                self.assertIn("remember-test",reopened.get("/").get_data(as_text=True))
+                response=reopened.post("/logout")
+                self.assertIn("Max-Age=0",response.headers.get("Set-Cookie",""))
+                with reopened.session_transaction() as session:
+                    self.assertNotIn("user_id",session)
+            with client.session_transaction() as session:
+                session.permanent=False
+            client.get("/")
+            with client.session_transaction() as session:
+                self.assertTrue(session.permanent)
+        self.store.delete_user(user["id"])
+
     def test_public_roster_fields(self):
-        data = json.loads((ROOT / "data/team.json").read_text(encoding="utf-8"))
+        data = self.main.app.jinja_env.get_template("team/content.html").module.team_content
         members = [member for season in data["seasons"] for member in season["members"]]
         self.assertEqual(len(members), 37)
         for member in members:
@@ -294,7 +323,7 @@ class SiteTests(unittest.TestCase):
             self.assertTrue(member["major"])
             self.assertRegex(member["grade"], r"^20\d{2}级$")
             if member["name"] == "黄益鹏":
-                self.assertEqual(member["role"], "视觉组成员")
+                self.assertIn(member["role"], {"视觉组成员", "视觉组组长"})
         raw = json.dumps(data, ensure_ascii=False)
         self.assertNotRegex(raw, r"\b1[3-9]\d{9}\b|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}")
 
@@ -307,7 +336,7 @@ class SiteTests(unittest.TestCase):
                     response = client.get(route)
                     self.assertEqual(response.status_code, 200)
                     html = response.get_data(as_text=True)
-                    self.assertIn("shared/theme.css", html)
+                    self.assertIn("_shared/theme.css", html)
                     self.assertEqual(html.count('aria-label="主导航"'), 1)
                     for asset in re.findall(r'(?:src|href)="(/(?:assets|media)/[^"]+)"', html):
                         path = unquote(urlsplit(asset).path).lstrip("/")

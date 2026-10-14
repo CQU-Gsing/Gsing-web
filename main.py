@@ -10,7 +10,7 @@ import logging
 import sys
 import time
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 from urllib.parse import urlsplit
 from pathlib import Path
@@ -29,8 +29,6 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 BASE_DIR = Path(__file__).resolve().parent
-SRTP_CONTENT = json.loads((BASE_DIR / "data" / "srtp2026.json").read_text(encoding="utf-8"))
-TEAM_CONTENT = json.loads((BASE_DIR / "data" / "team.json").read_text(encoding="utf-8"))
 AWARD_GALLERY = [
     {"label": "一队 · 障碍赛一等奖", "preview": "/media/pages/2026RC/一队_障碍赛_一等奖.webp"},
     {"label": "一队 · 任务赛三等奖", "preview": "/media/pages/2026RC/一队_任务赛_三等奖.webp"},
@@ -57,8 +55,13 @@ def build_access_logger():
 
 access_logger = build_access_logger()
 app = Flask(__name__, static_folder=None, template_folder="pages")
+# Public copy belongs to the HTML templates; reuse options for server validation.
+TEAM_CONTENT = app.jinja_env.get_template("team/content.html").module.team_content
+SRTP_CONTENT = app.jinja_env.get_template("srtp/2026/vision/content.html").module.project
 app.config.update(
     SECRET_KEY=os.environ.get("GSING_SECRET_KEY", "dev-change-this-secret-before-deploy"),
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+    SESSION_REFRESH_EACH_REQUEST=True,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     MAX_CONTENT_LENGTH=1024 * 1024 * 1024,
@@ -131,6 +134,8 @@ def start_request_timer():
         g.blocked_path_reason = "unsafe-method"
     if g.blocked_path_reason:
         return "Forbidden\n", 403, {"Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
+    if session.get("user_id") and not session.permanent:
+        session.permanent = True
 
 
 @app.after_request
@@ -181,6 +186,7 @@ def login_required(view):
 
 def sign_in_user(user):
     session.clear()
+    session.permanent = True
     session["user_id"] = user["id"]
     session["username"] = user["username"]
     session["email"] = user.get("email")
@@ -225,7 +231,7 @@ def database_viewer():
         data = store.browse_database(table, page)
     except ValueError:
         abort(400)
-    response = app.make_response(render_template("admin/database.html", data=data, tables=store.DATABASE_TABLES))
+    response = app.make_response(render_template("admin/database/index.html", data=data, tables=store.DATABASE_TABLES))
     response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -245,7 +251,7 @@ def visit_analytics():
         detail = visit_detail(store, ip, page) if ip else None
     except ValueError:
         abort(400)
-    response = app.make_response(render_template("admin/visits.html", stats=build_analytics(store,query), query=query, detail=detail))
+    response = app.make_response(render_template("visit/index.html", stats=build_analytics(store,query), query=query, detail=detail))
     response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -263,7 +269,7 @@ def home():
 @app.get("/projects/gsing/")
 def gsing_project():
     project = store.get_page_settings("gsing")
-    return render_template("team/history.html", project=project, project_blocks=article_content_blocks(project.get("content", "")))
+    return render_template("team/history/index.html", project=project, project_blocks=article_content_blocks(project.get("content", "")))
 
 
 @app.get("/groups/<slug>/")
@@ -271,7 +277,7 @@ def team_group(slug: str):
     group = next((item for item in TEAM_CONTENT["groups"] if item["slug"] == slug), None)
     if group is None:
         abort(404)
-    return render_template("groups/detail.html", group=group)
+    return render_template("team/groups/index.html", group=group)
 
 
 @app.get("/pages/home/")
@@ -285,14 +291,18 @@ def legacy_devlog():
 
 
 PAGE_ASSETS = {
-    "shared/base.css", "shared/theme.css", "shared/site-chrome.js",
+    "_shared/base.css", "_shared/theme.css", "_shared/site-chrome.js",
     "home/home.css", "home/home.js", "team/team.css",
-    "login/auth.css", "login/auth-email.js", "admin/visits.css",
-    "admin/admin.css", "polls/poll.css", "srtp/srtp.css",
+    "login/auth.css", "login/auth-email.js", "visit/visit.css",
+    "admin/admin.css", "training/polls/poll.css", "srtp/2026/vision/srtp.css",
 }
+
+# Retain cached resource URLs after moving files.
+PAGE_ASSET_ALIASES = {'shared/base.css': '_shared/base.css', 'shared/theme.css': '_shared/theme.css', 'shared/site-chrome.js': '_shared/site-chrome.js', 'admin/visits.css': 'visit/visit.css', 'polls/poll.css': 'training/polls/poll.css', 'srtp/srtp.css': 'srtp/2026/vision/srtp.css'}
 
 @app.get("/assets/<path:filename>")
 def page_asset(filename):
+    filename = PAGE_ASSET_ALIASES.get(filename, filename)
     if filename not in PAGE_ASSETS:
         abort(404)
     return send_from_directory(BASE_DIR / "pages", filename)
@@ -332,7 +342,7 @@ def vision_training_poll(poll_slug):
         else:
             flash("请填写 1–60 字的队名，并至少选择一个有效时间。" if poll["requires_team"] else "请至少选择一个有效时间。", "error")
         status = 400
-    return render_template("polls/index.html", poll=poll, team_name=team_name, title=poll["title"], options=POLL_OPTIONS,
+    return render_template("training/polls/index.html", poll=poll, team_name=team_name, title=poll["title"], options=POLL_OPTIONS,
                            vote=vote, selected=selected, closed=closed), status
 
 
@@ -345,7 +355,7 @@ def training_poll_results(poll_slug):
     poll = POLLS.get(poll_slug)
     if not poll:
         abort(404)
-    return render_template("admin/poll_results.html", poll=poll, poll_slug=poll_slug, results=store.poll_results(poll["id"]),
+    return render_template("training/polls/results.html", poll=poll, poll_slug=poll_slug, results=store.poll_results(poll["id"]),
                            labels=dict(POLL_OPTIONS), closed=china_now() >= POLL_CLOSE)
 
 
@@ -418,7 +428,7 @@ def srtp_registration():
         else:
             flash("请完整填写报名信息，学号须为数字，年级须为 2026 级，选择校区与加入视觉组意向，并至少选择一个参与方向。","error")
         status=400
-    response=app.make_response((render_template("srtp/index.html",project=SRTP_CONTENT,data=data,application=application,closed=closed),status))
+    response=app.make_response((render_template("srtp/2026/vision/index.html",data=data,application=application,closed=closed),status))
     response.headers["Cache-Control"]="no-store"
     return response
 
@@ -426,7 +436,7 @@ def srtp_registration():
 @app.get("/admin/srtp/vision")
 @admin_required
 def srtp_applications():
-    response=app.make_response(render_template("admin/srtp.html",applications=store.list_srtp_applications()))
+    response=app.make_response(render_template("srtp/2026/vision/admin.html",applications=store.list_srtp_applications()))
     response.headers["Cache-Control"]="no-store"
     return response
 
@@ -549,7 +559,7 @@ def logout():
 
 @app.get("/awards/2026/")
 def awards_2026():
-    return render_template("articles/awards.html", award_gallery=AWARD_GALLERY)
+    return render_template("awards/2026/index.html", award_gallery=AWARD_GALLERY)
 
 
 @app.get("/articles/<slug>")
@@ -569,7 +579,7 @@ def article(slug: str):
     award_gallery = []
     if item["slug"] == "2026-awards":
         award_gallery = AWARD_GALLERY
-    return render_template("articles/detail.html", article=item, content_blocks=article_content_blocks(item["content"]), award_gallery=award_gallery, comments=store.list_comments(item["id"]))
+    return render_template("news/detail.html", article=item, content_blocks=article_content_blocks(item["content"]), award_gallery=award_gallery, comments=store.list_comments(item["id"]))
 
 
 @app.post("/articles/<int:article_id>/comments")
@@ -663,17 +673,17 @@ def new_article():
             datetime.strptime(data["created_at"], "%Y-%m-%d")
         except ValueError:
             flash("请选择有效的显示日期", "error")
-            return render_template("admin/editor.html", article=data, mode="new")
+            return render_template("news/editor.html", article=data, mode="new")
         if not valid_direct_url(data["external_url"]):
             flash("请填写完整的 http 或 https 跳转链接", "error")
-            return render_template("admin/editor.html", article=data, mode="new")
+            return render_template("news/editor.html", article=data, mode="new")
         if len(data["title"]) < 2 or len(data["summary"]) < 10:
             flash("标题至少 2 个字，摘要至少 10 个字", "error")
-            return render_template("admin/editor.html", article=data, mode="new")
+            return render_template("news/editor.html", article=data, mode="new")
         item = store.create_article(**data, slug=slugify(data["title"]))
         flash("文章已发布", "success")
         return redirect(url_for("admin") + "#recent-stories")
-    return render_template("admin/editor.html", article={"created_at": datetime.now().strftime("%Y-%m-%d")}, mode="new")
+    return render_template("news/editor.html", article={"created_at": datetime.now().strftime("%Y-%m-%d")}, mode="new")
 
 
 @app.route("/admin/articles/<int:article_id>/edit", methods=["GET", "POST"])
@@ -694,17 +704,17 @@ def edit_article(article_id: int):
             datetime.strptime(data["created_at"], "%Y-%m-%d")
         except ValueError:
             flash("请选择有效的显示日期", "error")
-            return render_template("admin/editor.html", article={**item, **data}, mode="edit")
+            return render_template("news/editor.html", article={**item, **data}, mode="edit")
         if not valid_direct_url(data["external_url"]):
             flash("请填写完整的 http 或 https 跳转链接", "error")
-            return render_template("admin/editor.html", article={**item, **data}, mode="edit")
+            return render_template("news/editor.html", article={**item, **data}, mode="edit")
         if len(data["title"]) < 2 or len(data["summary"]) < 10:
             flash("标题至少 2 个字，摘要至少 10 个字", "error")
-            return render_template("admin/editor.html", article={**item, **data}, mode="edit")
+            return render_template("news/editor.html", article={**item, **data}, mode="edit")
         store.update_article(article_id, **data)
         flash("文章已更新", "success")
         return redirect(url_for("admin"))
-    return render_template("admin/editor.html", article=item, mode="edit")
+    return render_template("news/editor.html", article=item, mode="edit")
 
 
 @app.post("/admin/articles/<int:article_id>/toggle")

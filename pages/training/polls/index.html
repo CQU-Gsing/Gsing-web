@@ -1,6 +1,6 @@
-{% extends 'base.html' %}
+{% extends '_shared/base.html' %}
 {% block title %}{{ title }}｜GSing{% endblock %}
-{% block head %}<link rel="stylesheet" href="{{ url_for('page_asset',filename='polls/poll.css',v='20261010') }}">{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('page_asset',filename='training/polls/poll.css',v='20261010') }}">{% endblock %}
 {% block body %}
 <main class="poll-shell"><a class="back" href="{{ url_for('home') }}#stories">← 返回最近动态</a>
 <header class="poll-heading"><p class="eyebrow">GSING / TRAINING</p><h1>{{ title }}</h1><p>选择所有可以参加的时间，帮助我们安排培训。</p><p>无法参加培训的队员，后续会提供培训录屏和 PPT，方便补学。</p><span class="poll-deadline">{{ '已截止' if closed else '投票进行中' }} · 2026 年 10 月 10 日 23:59 截止（北京时间）</span></header>
