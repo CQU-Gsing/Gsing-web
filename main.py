@@ -231,7 +231,7 @@ def database_viewer():
         data = store.browse_database(table, page)
     except ValueError:
         abort(400)
-    response = app.make_response(render_template("admin/database/index.html", data=data, tables=store.DATABASE_TABLES))
+    response = app.make_response(render_template("admin/database/index.html", data=data, tables=store.DATABASE_TABLES, admin_tab="database"))
     response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -251,7 +251,7 @@ def visit_analytics():
         detail = visit_detail(store, ip, page) if ip else None
     except ValueError:
         abort(400)
-    response = app.make_response(render_template("visit/index.html", stats=build_analytics(store,query), query=query, detail=detail))
+    response = app.make_response(render_template("visit/index.html", stats=build_analytics(store,query), query=query, detail=detail, admin_tab="visits"))
     response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -619,7 +619,27 @@ def message_board():
 @app.get("/admin")
 @admin_required
 def admin():
-    return render_template("admin/index.html", polls=[dict(poll, slug=slug, total=store.poll_results(poll["id"])["total"]) for slug, poll in POLLS.items()], users=store.list_users() if session.get("role") == "superadmin" else [], comments=store.list_comments(), messages=store.list_messages())
+    admin_tab = request.args.get("tab", "activity")
+    if admin_tab not in {"activity", "community", "users"} or (admin_tab == "users" and session.get("role") != "superadmin"):
+        abort(404)
+    content_items = []
+    poll_by_id = {poll["id"]: slug for slug, poll in POLLS.items()}
+    for article in (store.list_articles(published_only=True, limit=8) if admin_tab == "activity" else []):
+        item = dict(article, page_url=url_for("article", slug=article["slug"]), manage_url=None, count=None, count_label="", deadline="")
+        if article["slug"] == "srtp-2026-yolo-recruitment":
+            from src.srtp import CLOSE_AT
+            item.update(page_url=url_for("srtp_registration"), manage_url=url_for("srtp_applications"),
+                        count=len(store.list_srtp_applications()), count_label="份报名意向", deadline=CLOSE_AT.strftime("%Y-%m-%d %H:%M")+" · 北京时间截止")
+        elif article["slug"] in poll_by_id:
+            slug = poll_by_id[article["slug"]]
+            item.update(page_url=url_for("vision_training_poll", poll_slug=slug), manage_url=url_for("training_poll_results", poll_slug=slug),
+                        count=store.poll_results(article["slug"])["total"], count_label="个账号已投票", deadline="2026-10-10 23:59 · 北京时间截止")
+        elif article.get("direct_link"):
+            item["page_url"] = article["external_url"]
+        if item["manage_url"] and item["count"]:
+            item["short_title"] = "视觉组 SRTP 报名" if article["slug"] == "srtp-2026-yolo-recruitment" else article["title"].removeprefix("Gsing")
+            content_items.append(item)
+    return render_template("admin/index.html", admin_tab=admin_tab, content_items=content_items, users=store.list_users() if session.get("role") == "superadmin" else [], comments=store.list_comments(), messages=store.list_messages())
 
 
 @app.post("/admin/comments/<int:comment_id>/delete")
@@ -627,7 +647,7 @@ def admin():
 def delete_comment(comment_id: int):
     store.delete_comment(comment_id)
     flash("评论已删除", "success")
-    return redirect(url_for("admin") + "#community")
+    return redirect(url_for("admin", tab="community"))
 
 
 @app.post("/admin/messages/<int:message_id>/delete")
@@ -635,7 +655,7 @@ def delete_comment(comment_id: int):
 def delete_message(message_id: int):
     store.delete_message(message_id)
     flash("留言已删除", "success")
-    return redirect(url_for("admin") + "#community")
+    return redirect(url_for("admin", tab="community"))
 
 
 @app.post("/admin/users/<int:user_id>/role")
@@ -643,14 +663,14 @@ def delete_message(message_id: int):
 def set_user_role(user_id: int):
     role = request.form.get("role", "user")
     flash("用户权限已更新" if store.set_user_role(user_id, role) else "无法修改该账户", "success" if role in {"user", "admin"} else "error")
-    return redirect(url_for("admin") + "#users")
+    return redirect(url_for("admin", tab="users"))
 
 
 @app.post("/admin/users/<int:user_id>/delete")
 @superadmin_required
 def delete_user(user_id: int):
     flash("用户已删除" if store.delete_user(user_id) else "无法删除该账户", "success")
-    return redirect(url_for("admin") + "#users")
+    return redirect(url_for("admin", tab="users"))
 
 
 def slugify(title: str) -> str:

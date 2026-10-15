@@ -314,6 +314,30 @@ class SiteTests(unittest.TestCase):
                 self.assertTrue(session.permanent)
         self.store.delete_user(user["id"])
 
+    def test_admin_content_follows_home_news_order(self):
+        available={"srtp-2026-yolo-recruitment","vision-training-202610","freshman-training-202610"}
+        expected=[item["slug"] for item in self.store.list_articles(published_only=True,limit=8) if item["slug"] in available]
+        with self.app.test_client() as client, patch.object(self.main,"can_view_database",return_value=True):
+            with client.session_transaction() as session:
+                session.update(user_id=1,username="test-admin",role="admin")
+            with patch.object(self.store,"list_srtp_applications",return_value=[{}]),patch.object(self.store,"poll_results",return_value={"total":2}):
+                html=client.get("/admin").get_data(as_text=True)
+                self.assertEqual(re.findall(r'data-news-slug="([^"]+)"',html),expected)
+                self.assertIn("查看报名记录",html)
+                self.assertIn("查看投票记录",html)
+                nav=re.search(r'<nav class="admin-tabs" aria-label="后台栏目">(.*?)</nav>',html).group(1)
+                self.assertEqual(re.findall(r'<a[^>]*>([^<]+)</a>',nav),["数据库数据","动态","访问分析","留言与评论"])
+                self.assertNotIn('id="community"',html)
+                community=client.get("/admin?tab=community").get_data(as_text=True)
+                self.assertIn('id="community"',community)
+                self.assertNotIn('id="activity-records"',community)
+                self.assertNotIn('id="users"',community)
+
+            with patch.object(self.store,"list_srtp_applications",return_value=[]),patch.object(self.store,"poll_results",return_value={"total":0}):
+                html=client.get("/admin").get_data(as_text=True)
+                self.assertNotIn("data-news-slug",html)
+                self.assertIn("暂无已保存的报名或投票记录",html)
+
     def test_public_roster_fields(self):
         data = self.main.app.jinja_env.get_template("team/content.html").module.team_content
         members = [member for season in data["seasons"] for member in season["members"]]
